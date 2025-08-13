@@ -1,14 +1,15 @@
-import pandas as pd
-import numpy as np
-from typing import Dict, Any, List, Optional
 import logging
+
+import numpy as np
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
 
-async def convert_data_to_chart_data_1d(data_cur: pd.DataFrame, data_cols: list[str], x_key: str, y_col: str) -> list[dict]:
-    """
-    Convert the data to a chart data array for 1D charts (like a pie chart).
+async def convert_data_to_chart_data_1d(
+    data_cur: pd.DataFrame, data_cols: list[str], x_key: str, y_col: str
+) -> list[dict]:
+    """Convert the data to a chart data array for 1D charts (like a pie chart).
 
     Args:
         data_cur: The current data
@@ -20,16 +21,18 @@ async def convert_data_to_chart_data_1d(data_cur: pd.DataFrame, data_cols: list[
         list[dict]: The chart data array
     """
     chart_data_array = []
-    
+
     for col in data_cols:
         item = {}
         item[col] = convert_value(data_cur[data_cur[x_key] == col].iloc[0][y_col])
         chart_data_array.append(item)
-    return chart_data_array 
+    return chart_data_array
 
-async def convert_data_to_chart_data(data_cur: pd.DataFrame, data_cols: list[str], x_key: str) -> list[dict]:
-    """
-    Convert the data to a chart data array.
+
+async def convert_data_to_chart_data(
+    data_cur: pd.DataFrame, data_cols: list[str], x_key: str
+) -> list[dict]:
+    """Convert the data to a chart data array.
 
     Args:
         data_cur: The current data
@@ -47,16 +50,18 @@ async def convert_data_to_chart_data(data_cur: pd.DataFrame, data_cols: list[str
         for col in data_cols:
             item[col] = convert_value(data_cur.iloc[i][col])
         chart_data_array.append(item)
-    return chart_data_array 
+    return chart_data_array
+
 
 def convert_chart_data_to_chart_config(data_cols: list[str], colors: list[str]) -> dict:
     chart_config = {}
     for i, col in enumerate(data_cols):
         chart_config[col] = {
             "color": colors[i % len(colors)],
-            "label": col.replace("_", " ").lower()
+            "label": col.replace("_", " ").lower(),
         }
     return chart_config
+
 
 def convert_value(value):
     if pd.isna(value):
@@ -69,23 +74,24 @@ def convert_value(value):
         return bool(value)
     return value
 
+
 def remove_null_pairs(d):
-    """
-    Recursively removes key-value pairs from a dictionary where the value is None.
+    """Recursively removes key-value pairs from a dictionary where the value is None.
+
     Args:
         d (dict): The dictionary to process
     Returns:
-        dict: A new dictionary with None values removed
+        dict: A new dictionary with None values removed.
     """
     if not isinstance(d, dict):
         return d
-        
+
     result = {}
     for key, value in d.items():
         if value is None:
             # Skip None values
             continue
-            
+
         if isinstance(value, dict):
             # Recursively process nested dictionaries
             nested_result = remove_null_pairs(value)
@@ -93,7 +99,10 @@ def remove_null_pairs(d):
                 result[key] = nested_result
         elif isinstance(value, list):
             # Process lists that might contain dictionaries
-            processed_list = [remove_null_pairs(item) if isinstance(item, dict) else item for item in value]
+            processed_list = [
+                remove_null_pairs(item) if isinstance(item, dict) else item
+                for item in value
+            ]
             # Filter out None values from the list
             processed_list = [item for item in processed_list if item is not None]
             if processed_list:  # Only add if the list is not empty
@@ -101,5 +110,5 @@ def remove_null_pairs(d):
         else:
             # For non-dict, non-list values, keep them as is
             result[key] = value
-            
+
     return result
