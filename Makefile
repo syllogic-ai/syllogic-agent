@@ -1,4 +1,4 @@
-.PHONY: all format lint test tests test_watch integration_tests docker_tests help extended_tests
+.PHONY: all format lint test tests test_watch integration_tests docker_tests help extended_tests install dev serve setup
 
 # Default target executed when no arguments are given to make.
 all: help
@@ -6,20 +6,39 @@ all: help
 # Define a variable for the test file path.
 TEST_FILE ?= tests/unit_tests/
 
+######################
+# SETUP AND DEVELOPMENT
+######################
+
+install:
+	pip install -e .
+
+dev:
+	pip install -e .[dev]
+
+setup: dev
+	@echo "Project setup complete! You can now run:"
+	@echo "  make serve    - Start LangGraph development server"
+	@echo "  make test     - Run tests"
+	@echo "  make lint     - Run linting"
+
+serve:
+	langgraph dev
+
 test:
-	python -m pytest $(TEST_FILE)
+	PYTHONPATH=src python -m pytest $(TEST_FILE)
 
 integration_tests:
-	python -m pytest tests/integration_tests 
+	PYTHONPATH=src python -m pytest tests/integration_tests 
 
 test_watch:
-	python -m ptw --snapshot-update --now . -- -vv tests/unit_tests
+	PYTHONPATH=src python -m ptw --snapshot-update --now . -- -vv tests/unit_tests
 
 test_profile:
-	python -m pytest -vv tests/unit_tests/ --profile-svg
+	PYTHONPATH=src python -m pytest -vv tests/unit_tests/ --profile-svg
 
 extended_tests:
-	python -m pytest --only-extended $(TEST_FILE)
+	PYTHONPATH=src python -m pytest --only-extended $(TEST_FILE)
 
 
 ######################
@@ -58,6 +77,13 @@ spell_fix:
 
 help:
 	@echo '----'
+	@echo 'Setup:'
+	@echo 'setup                        - install dependencies and set up project'
+	@echo 'install                      - install main dependencies only'
+	@echo 'dev                          - install with dev dependencies'
+	@echo 'serve                        - start LangGraph development server'
+	@echo ''
+	@echo 'Development:'
 	@echo 'format                       - run code formatters'
 	@echo 'lint                         - run linters'
 	@echo 'test                         - run unit tests'

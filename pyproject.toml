@@ -11,11 +11,23 @@ requires-python = ">=3.9"
 dependencies = [
     "langgraph>=0.2.6",
     "python-dotenv>=1.0.1",
+    "supabase>=2.0.0",
+    "pandas>=2.0.0",
+    "numpy>=1.24.0",
+    "requests>=2.28.0",
+    "openai>=1.76.1",
 ]
 
 
 [project.optional-dependencies]
-dev = ["mypy>=1.11.1", "ruff>=0.6.1"]
+dev = [
+    "mypy>=1.11.1", 
+    "ruff>=0.6.1",
+    "anyio>=4.7.0",
+    "langgraph-cli[inmem]>=0.2.8",
+    "pytest>=8.3.5",
+    "pytest-asyncio>=0.21.0",
+]
 
 [build-system]
 requires = ["setuptools>=73.0.0", "wheel"]
@@ -55,11 +67,3 @@ lint.ignore = [
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
-[dependency-groups]
-dev = [
-    "anyio>=4.7.0",
-    "langgraph-cli[inmem]>=0.2.8",
-    "mypy>=1.13.0",
-    "pytest>=8.3.5",
-    "ruff>=0.8.2",
-]
