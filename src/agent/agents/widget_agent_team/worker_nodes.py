@@ -13,6 +13,7 @@ from langgraph.prebuilt import create_react_agent
 from langgraph.types import Command
 
 from agent.models import WidgetAgentState, FileSchema, ColumnInfo, FileSampleData
+from pydantic import BaseModel, Field
 from langgraph.types import Command
 from langgraph.prebuilt.chat_agent_executor import AgentState
 from langgraph.graph.message import add_messages
@@ -27,6 +28,22 @@ def get_fresh_repl():
     return PythonREPL()
 
 # No global variables - use Command objects for immediate state updates
+
+
+class DataValidationResult(BaseModel):
+    """Structured output for data validation assessment"""
+    
+    is_valid: bool = Field(description="Whether the generated data meets the requirements")
+    confidence_level: int = Field(description="Confidence level from 0-100", ge=0, le=100)
+    explanation: str = Field(description="Detailed explanation of validation result")
+    missing_requirements: Optional[List[str]] = Field(
+        default=None, 
+        description="List of missing requirements if validation fails"
+    )
+    data_quality_issues: Optional[List[str]] = Field(
+        default=None,
+        description="List of data quality issues identified"
+    )
 
 
 @tool
@@ -758,95 +775,26 @@ Please:
             )
 
     def validate_data_node(self, state: WidgetAgentState) -> Command:
-        """Validates the data structure for the specific widget type."""
-
-        def validate_line_chart(data):
-            """Validate line chart data structure."""
-            if not isinstance(data, dict):
-                return False, "Line chart data must be a dictionary"
-            if "x" not in data or "y" not in data:
-                return False, "Line chart needs 'x' and 'y' properties"
-            if not isinstance(data["x"], list) or not isinstance(data["y"], list):
-                return False, "Line chart x and y must be arrays"
-            if len(data["x"]) != len(data["y"]):
-                return False, "Line chart x and y arrays must have same length"
-            return True, "Valid line chart data"
-
-        def validate_bar_chart(data):
-            """Validate bar chart data structure."""
-            if not isinstance(data, dict):
-                return False, "Bar chart data must be a dictionary"
-            if "categories" not in data or "values" not in data:
-                return False, "Bar chart needs 'categories' and 'values' properties"
-            if not isinstance(data["categories"], list) or not isinstance(
-                data["values"], list
-            ):
-                return False, "Bar chart categories and values must be arrays"
-            if len(data["categories"]) != len(data["values"]):
-                return False, "Bar chart categories and values must have same length"
-            return True, "Valid bar chart data"
-
-        def validate_pie_chart(data):
-            """Validate pie chart data structure."""
-            if not isinstance(data, list):
-                return False, "Pie chart data must be an array"
-            if len(data) == 0:
-                return False, "Pie chart data cannot be empty"
-            for item in data:
-                if not isinstance(item, dict):
-                    return False, "Pie chart items must be objects"
-                if "label" not in item or "value" not in item:
-                    return False, "Pie chart items need 'label' and 'value' properties"
-            return True, "Valid pie chart data"
-
-        def validate_table(data):
-            """Validate table data structure."""
-            if not isinstance(data, list):
-                return False, "Table data must be an array"
-            if len(data) == 0:
-                return False, "Table data cannot be empty"
-            return True, "Valid table data"
-
-        def validate_kpi(data):
-            """Validate KPI data structure."""
-            if not isinstance(data, dict):
-                return False, "KPI data must be a dictionary"
-            if "value" not in data:
-                return False, "KPI needs 'value' property"
-            return True, "Valid KPI data"
-
-        # Define validators for each widget type
-        widget_validators = {
-            "line": validate_line_chart,
-            "bar": validate_bar_chart,
-            "pie": validate_pie_chart,
-            "table": validate_table,
-            "kpi": validate_kpi,
-            "area": validate_line_chart,  # Same as line chart
-            "radial": validate_bar_chart,  # Same as bar chart
-        }
-
+        """LLM-based validation that analyzes generated data against user requirements."""
+        
         try:
+            # Check if we have execution result
             if state.code_execution_result is None:
                 return Command(
                     goto="widget_supervisor",
                     update={
-                        "error_messages": state.error_messages
-                        + ["No execution result to validate"],
+                        "error_messages": state.error_messages + ["No execution result to validate"],
+                        "data_validated": False,
                         "updated_at": datetime.now(),
                     },
                 )
 
             # Check for execution errors first
-            if (
-                isinstance(state.code_execution_result, dict)
-                and "error" in state.code_execution_result
-            ):
+            if (isinstance(state.code_execution_result, dict) and "error" in state.code_execution_result):
                 return Command(
                     goto="widget_supervisor",
                     update={
-                        "error_messages": state.error_messages
-                        + [
+                        "error_messages": state.error_messages + [
                             f"Code execution returned error: {state.code_execution_result['error']}"
                         ],
                         "data_validated": False,
@@ -854,40 +802,102 @@ Please:
                     },
                 )
 
-            validator = widget_validators.get(state.widget_type)
-            if not validator:
-                return Command(
-                    goto="widget_supervisor",
-                    update={
-                        "error_messages": state.error_messages
-                        + [
-                            f"No validator available for widget type: {state.widget_type}"
-                        ],
-                        "updated_at": datetime.now(),
-                    },
-                )
+            # Get first 10 rows/items of generated data for validation
+            sample_data = self._get_data_sample(state.code_execution_result)
+            
+            # Get data schema information  
+            data_schema = self._analyze_data_structure(state.code_execution_result)
+            
+            # Create validation prompt for LLM
+            validation_llm = init_chat_model("openai:gpt-4o-mini").with_structured_output(DataValidationResult)
+            
+            validation_prompt = f"""
+You are a data validation expert. Analyze the generated data against the user requirements and task description.
 
-            is_valid, message = validator(state.code_execution_result)
+TASK DESCRIPTION: {state.task_instructions}
+USER PROMPT: {state.user_prompt}
+WIDGET TYPE: {state.widget_type}
+OPERATION: {state.operation}
 
-            if is_valid:
+GENERATED DATA SAMPLE (first 10 items):
+{json.dumps(sample_data, indent=2, default=str)}
+
+DATA SCHEMA ANALYSIS:
+{json.dumps(data_schema, indent=2)}
+
+VALIDATION CRITERIA:
+1. Does the data structure match the widget type requirements?
+   - Line/Area charts: dict with 'x' and 'y' arrays
+   - Bar charts: dict with 'categories' and 'values' arrays  
+   - Pie charts: array of objects with 'label' and 'value' properties
+   - Tables: array of objects (records)
+   - KPI: dict with 'value' property
+
+2. Does the data content align with the user's request?
+3. Are the data types appropriate?
+4. Is the data complete and not empty?
+5. Does the data make sense for the specified operation?
+
+Provide:
+- is_valid: Boolean indicating if data meets all requirements
+- confidence_level: 0-100 confidence score
+- explanation: Detailed explanation of your assessment
+- missing_requirements: List specific missing elements if validation fails
+- data_quality_issues: List any data quality problems identified
+
+If confidence is below 80, be very specific about what's wrong and what needs to be fixed.
+"""
+
+            # Get validation result from LLM
+            validation_result = validation_llm.invoke(validation_prompt)
+            
+            # Create validation message
+            validation_message = f"Confidence: {validation_result.confidence_level}% - {validation_result.explanation}"
+            
+            # Determine if data should be considered valid (high confidence threshold)
+            data_is_valid = validation_result.is_valid and validation_result.confidence_level >= 80
+            
+            if data_is_valid:
+                # Mark task as completed if validation passes
                 return Command(
                     goto="widget_supervisor",
                     update={
                         "data_validated": True,
                         "data": state.code_execution_result,
+                        "task_status": "completed",
                         "updated_at": datetime.now(),
+                        "messages": [
+                            ToolMessage(
+                                content=f"✅ Data validation successful! {validation_message}",
+                                tool_call_id="validation_complete"
+                            )
+                        ]
                     },
                 )
             else:
-                error_msg = (
-                    f"Data validation failed for {state.widget_type} widget: {message}"
-                )
+                # Build detailed error message for retry
+                error_details = []
+                if validation_result.missing_requirements:
+                    error_details.append(f"Missing requirements: {', '.join(validation_result.missing_requirements)}")
+                if validation_result.data_quality_issues:
+                    error_details.append(f"Data quality issues: {', '.join(validation_result.data_quality_issues)}")
+                
+                detailed_error = f"Validation failed (Confidence: {validation_result.confidence_level}%). {validation_result.explanation}"
+                if error_details:
+                    detailed_error += f" Issues: {'; '.join(error_details)}"
+                
                 return Command(
                     goto="widget_supervisor",
                     update={
                         "data_validated": False,
-                        "error_messages": state.error_messages + [error_msg],
+                        "error_messages": state.error_messages + [detailed_error],
                         "updated_at": datetime.now(),
+                        "messages": [
+                            ToolMessage(
+                                content=f"❌ {validation_message}",
+                                tool_call_id="validation_failed"
+                            )
+                        ]
                     },
                 )
 
@@ -895,49 +905,57 @@ Please:
             return Command(
                 goto="widget_supervisor",
                 update={
-                    "error_messages": state.error_messages
-                    + [f"Validation error: {str(e)}"],
+                    "error_messages": state.error_messages + [f"Validation error: {str(e)}"],
+                    "data_validated": False,
                     "updated_at": datetime.now(),
                 },
             )
-
-    def update_task_node(self, state: WidgetAgentState) -> Command:
-        """Finalizes the task with appropriate status and metadata."""
-
-        # Determine final status
-        if state.data_validated and state.data is not None:
-            final_status = "completed"
-            widget_metadata = {
-                "widget_type": state.widget_type,
-                "operation": state.operation,
-                "data_points": len(state.data) if isinstance(state.data, list) else 1,
-                "iterations_needed": state.iteration_count,
-                "processing_time": (datetime.now() - state.created_at).total_seconds(),
-                "files_processed": len(state.file_ids),
-                "success": True,
+    
+    def _get_data_sample(self, data):
+        """Extract first 10 rows/items from generated data for validation."""
+        if isinstance(data, list):
+            return data[:10]
+        elif isinstance(data, dict):
+            if 'x' in data and 'y' in data:
+                # Chart data - sample both x and y
+                return {
+                    'x': data['x'][:10] if isinstance(data['x'], list) else data['x'],
+                    'y': data['y'][:10] if isinstance(data['y'], list) else data['y']
+                }
+            elif 'categories' in data and 'values' in data:
+                # Bar chart data
+                return {
+                    'categories': data['categories'][:10] if isinstance(data['categories'], list) else data['categories'],
+                    'values': data['values'][:10] if isinstance(data['values'], list) else data['values']
+                }
+            else:
+                # Generic dict - return first 10 key-value pairs
+                items = list(data.items())[:10]
+                return dict(items)
+        else:
+            return data  # Return as-is for other types
+    
+    def _analyze_data_structure(self, data):
+        """Analyze the structure and types of generated data."""
+        if isinstance(data, list):
+            return {
+                "type": "array",
+                "length": len(data),
+                "item_type": type(data[0]).__name__ if data else "unknown",
+                "sample_keys": list(data[0].keys()) if data and isinstance(data[0], dict) else None
+            }
+        elif isinstance(data, dict):
+            return {
+                "type": "object", 
+                "keys": list(data.keys()),
+                "key_types": {k: type(v).__name__ for k, v in data.items()},
+                "array_lengths": {k: len(v) if isinstance(v, list) else None for k, v in data.items()}
             }
         else:
-            final_status = "failed"
-            widget_metadata = {
-                "widget_type": state.widget_type,
-                "operation": state.operation,
-                "failure_reason": state.error_messages[-1]
-                if state.error_messages
-                else "Unknown error",
-                "iterations_attempted": state.iteration_count,
-                "files_attempted": len(state.file_ids),
-                "success": False,
-                "all_errors": state.error_messages,
+            return {
+                "type": type(data).__name__,
+                "value": str(data)[:100]  # First 100 chars
             }
-
-        return Command(
-            goto="widget_supervisor",
-            update={
-                "task_status": final_status,
-                "widget_metadata": widget_metadata,
-                "updated_at": datetime.now(),
-            },
-        )
 
 
 # Create lazy singleton instance
@@ -959,9 +977,6 @@ def validate_data_node(state: WidgetAgentState) -> Command:
     """Lazy wrapper for validate_data_node."""
     return get_worker_nodes().validate_data_node(state)
 
-def update_task_node(state: WidgetAgentState) -> Command:
-    """Lazy wrapper for update_task_node."""
-    return get_worker_nodes().update_task_node(state)
 
 # Export tools
 __all__ = [
@@ -970,6 +985,5 @@ __all__ = [
     "generate_python_code_tool",
     "data_node", 
     "validate_data_node", 
-    "update_task_node",
     "get_worker_nodes"
 ]

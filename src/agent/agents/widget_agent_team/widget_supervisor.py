@@ -62,18 +62,16 @@ CURRENT STATE ANALYSIS:
 
 AVAILABLE NODES:
 1. data: Unified node that fetches data if needed, generates code, and executes it (run if data processing is needed)
-2. validate_data: Validates the execution result matches widget requirements
-3. update_task: Updates the final task status and metadata
-4. end: Complete the workflow
+2. validate_data: Validates the execution result matches widget requirements (with LLM-based confidence scoring)
+3. end: Complete the workflow
 
 DECISION RULES:
 - If data processing is needed (no raw data, no code, or no execution result), use 'data' node
-- If execution result exists but not validated, use 'validate_data' node
-- If data is validated (or failed max iterations), use 'update_task' node
-- If task is completed/failed or max iterations reached, use 'end'
-- If errors exist and iteration_count < 3, retry with 'data' node
-- If iteration_count >= 3, proceed to 'update_task' with failure status
-- If all validations pass, proceed to update_task with success status
+- If execution result exists but not validated, use 'validate_data' node  
+- If data is validated successfully (confidence >= 80), use 'end' to complete the task
+- If validation failed and iteration_count < 3, retry with 'data' node (validation provides feedback for retry)
+- If iteration_count >= 3, use 'end' with failure status
+- The validate_data node now handles task completion internally when validation passes
 
 Make an intelligent routing decision based on the current state. Consider:
 - The logical flow of the pipeline
@@ -91,13 +89,13 @@ Return your decision with clear reasoning.
 
         # Max retry constraint
         if state.iteration_count >= 3 and decision.next_node == "data":
-            decision.next_node = "update_task"
-            decision.reasoning = "Maximum retry attempts reached, finalizing task"
+            decision.next_node = "end"
+            decision.reasoning = "Maximum retry attempts reached, ending task with failure"
 
         # Missing required fields for data processing
         if decision.next_node == "data" and not state.user_prompt:
-            decision.next_node = "update_task"
-            decision.reasoning = "Missing user prompt required for data processing"
+            decision.next_node = "end"
+            decision.reasoning = "Missing user prompt required for data processing, ending with failure"
 
         return decision
 
@@ -106,6 +104,41 @@ Return your decision with clear reasoning.
         Main supervisor function that reads complete state and makes intelligent routing decisions.
         """
         try:
+            # EXPLICIT COMPLETION CHECKS - Handle definitive completion conditions first
+            
+            # 1. Task explicitly marked as completed
+            if state.task_status == "completed":
+                return Command(
+                    goto=END,
+                    update={
+                        "widget_supervisor_reasoning": "Task marked as completed by validation",
+                        "updated_at": datetime.now(),
+                    },
+                )
+            
+            # 2. Task explicitly marked as failed 
+            if state.task_status == "failed":
+                return Command(
+                    goto=END,
+                    update={
+                        "widget_supervisor_reasoning": "Task marked as failed",
+                        "updated_at": datetime.now(),
+                    },
+                )
+                
+            # 3. Max iterations reached - force completion
+            if state.iteration_count >= 3:
+                final_status = "completed" if state.data_validated else "failed"
+                return Command(
+                    goto=END,
+                    update={
+                        "widget_supervisor_reasoning": "Maximum iterations reached, ending task",
+                        "task_status": final_status,
+                        "updated_at": datetime.now(),
+                    },
+                )
+
+            # If no explicit completion condition, proceed with LLM routing
             # Comprehensive state analysis
             state_analysis = self.analyze_state(state)
 
@@ -144,7 +177,7 @@ Return your decision with clear reasoning.
             # Handle supervisor errors gracefully
             error_msg = f"Supervisor error: {str(e)}"
             return Command(
-                goto="update_task",
+                goto=END,
                 update={
                     "error_messages": state.error_messages + [error_msg],
                     "widget_supervisor_reasoning": f"Supervisor failed: {error_msg}",

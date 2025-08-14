@@ -16,7 +16,6 @@ from supabase import Client
 from agent.agents.widget_agent_team.widget_supervisor import widget_supervisor
 from agent.agents.widget_agent_team.worker_nodes import (
     data_node,
-    update_task_node,
     validate_data_node,
 )
 
@@ -125,23 +124,23 @@ def build_widget_agent_graph():
     # Initialize the graph with the extended state schema
     builder = StateGraph(GraphWidgetState)
 
-    # Add the widget_supervisor node
+    # Add the widget_supervisor node with possible destinations for Command routing
     builder.add_node("widget_supervisor", wrap_node(widget_supervisor))
 
     # Add all worker nodes
     builder.add_node("data", wrap_node(data_node))
     builder.add_node("validate_data", wrap_node(validate_data_node))
-    builder.add_node("update_task", wrap_node(update_task_node))
 
     # Define edges - START goes to widget_supervisor
     builder.add_edge(START, "widget_supervisor")
-
-    # All worker nodes report back to widget_supervisor
-    # The supervisor uses Command objects to route dynamically
-    builder.add_edge("widget_supervisor", "data")
-    builder.add_edge("widget_supervisor", "validate_data")
-    builder.add_edge("widget_supervisor", "update_task")
-    builder.add_edge("widget_supervisor", END)
+    
+    # CRITICAL: Worker nodes must return to supervisor for continued routing
+    builder.add_edge("data", "widget_supervisor")
+    builder.add_edge("validate_data", "widget_supervisor")
+    
+    # NOTE: We do NOT add static edges from widget_supervisor to other nodes
+    # because the supervisor uses Command objects for dynamic routing
+    # Static edges would override the Command routing!
 
     # Compile the graph (LangGraph Cloud handles persistence automatically)
     graph = builder.compile(name="Widget Agent System")

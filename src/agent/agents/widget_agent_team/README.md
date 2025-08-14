@@ -22,11 +22,8 @@ The Widget Agent Team implements a sophisticated multi-agent system that can:
 - Routes tasks to appropriate worker nodes
 
 #### 2. **Worker Nodes** (`worker_nodes.py`)
-- **fetch_data_node**: Fetches data from file IDs
-- **generate_code_node**: Uses LLM to generate Python manipulation code
-- **execute_code_node**: Safely executes generated code in sandboxed environment
-- **validate_data_node**: Validates output data structure for widget type
-- **update_task_node**: Finalizes task with success/failure status
+- **data_node**: Unified data processing node that fetches data, generates code, and executes it
+- **validate_data_node**: LLM-based validation that analyzes data against user requirements with confidence scoring
 
 #### 3. **State Management** (`models.py`)
 - **WidgetAgentState**: Complete Pydantic state schema

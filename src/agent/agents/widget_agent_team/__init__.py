@@ -26,7 +26,6 @@ from .tools import CodeGenerator, DataProcessor
 from .widget_supervisor import WidgetSupervisor, widget_supervisor
 from .worker_nodes import (
     data_node,
-    update_task_node,
     validate_data_node,
 )
 
@@ -41,7 +40,6 @@ __all__ = [
     # Worker nodes
     "data_node",
     "validate_data_node",
-    "update_task_node",
     # Tools
     "DataProcessor",
     "CodeGenerator",
