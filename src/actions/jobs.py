@@ -88,9 +88,11 @@ def update_job_status(supabase: Client, update_input: UpdateJobInput) -> Job:
                     .single()
                     .execute()
                 )
-                if (current_job.data and 
-                    hasattr(current_job.data, 'get') and 
-                    current_job.data.get("started_at")):
+                if (
+                    current_job.data
+                    and hasattr(current_job.data, "get")
+                    and current_job.data.get("started_at")
+                ):
                     started_at = datetime.fromisoformat(
                         current_job.data["started_at"].replace("Z", "+00:00")
                     )
@@ -101,7 +103,9 @@ def update_job_status(supabase: Client, update_input: UpdateJobInput) -> Job:
                     update_data["processing_time_ms"] = processing_time_ms
             except Exception as e:
                 # Skip processing time calculation if query fails
-                logger.debug(f"Could not calculate processing time for job {update_input.job_id}: {str(e)}")
+                logger.debug(
+                    f"Could not calculate processing time for job {update_input.job_id}: {str(e)}"
+                )
 
         result = (
             supabase.table("jobs")

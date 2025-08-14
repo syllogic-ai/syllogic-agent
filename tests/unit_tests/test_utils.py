@@ -9,7 +9,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "src"))
+sys.path.insert(
+    0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "src")
+)
 
 from actions.utils import (
     convert_chart_data_to_chart_config,

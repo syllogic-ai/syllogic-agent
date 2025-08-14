@@ -1,8 +1,9 @@
 """New LangGraph Agent.
 
-This module defines a custom graph.
+This module provides agent functionality.
 """
 
-from .graph import graph
+# Remove circular import - graph should be imported directly when needed
+# from .graph import graph
 
-__all__ = ["graph"]
+__all__ = []

@@ -5,7 +5,13 @@
       "mcp__context7__resolve-library-id",
       "Bash(make:*)",
       "Bash(curl:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(PYTHONPATH=src python -c \"from agent.graph import graph; print(''Graph loaded successfully'')\")",
+      "Bash(PYTHONPATH=src python -c \"from agent.agents.widget_agent_team import worker_nodes; print(''Worker nodes imported successfully''); print(worker_nodes.__all__)\")",
+      "Bash(PYTHONPATH=src python -c \"from agent.graph import build_widget_agent_graph; print(''Graph builder imported successfully'')\")",
+      "Bash(PYTHONPATH=src python -m py_compile src/agent/agents/widget_agent_team/worker_nodes.py)",
+      "Bash(PYTHONPATH=src python -m py_compile src/agent/graph.py)",
+      "Bash(PYTHONPATH=src python:*)"
     ],
     "deny": [],
     "ask": []

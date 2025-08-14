@@ -15,33 +15,40 @@ from typing import Any
 from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
 
+from actions.dashboard import (
+    get_files_from_dashboard,
+    get_sample_data_from_files,
+    get_schemas_from_files,
+)
 from agent.models import TopLevelState
-
-from actions.dashboard import get_files_from_dashboard, get_schemas_from_files, get_sample_data_from_files
 
 logger = logging.getLogger(__name__)
 
 
-def _initialize_dashboard_context(state: TopLevelState, runtime_context: dict) -> TopLevelState:
+def _initialize_dashboard_context(
+    state: TopLevelState, runtime_context: dict
+) -> TopLevelState:
     """Initialize state with dashboard context by loading files, schemas, and sample data."""
     try:
-        supabase = runtime_context['supabase_client']
-               
+        supabase = runtime_context["supabase_client"]
+
         # Get files from dashboard
         file_ids = get_files_from_dashboard(supabase, state.dashboard_id)
-        
+
         # Get schemas and sample data for all files
         schemas = get_schemas_from_files(supabase, file_ids)
         samples = get_sample_data_from_files(supabase, file_ids)
-        
+
         # Update state with dashboard context
         state.file_ids = file_ids
         state.available_data_schemas = schemas
         state.available_sample_data = samples
-        
-        logger.info(f"Loaded dashboard context: {len(file_ids)} files, {len(schemas)} schemas, {len(samples)} samples")
+
+        logger.info(
+            f"Loaded dashboard context: {len(file_ids)} files, {len(schemas)} schemas, {len(samples)} samples"
+        )
         return state
-        
+
     except Exception as e:
         error_msg = f"Error initializing dashboard context: {str(e)}"
         state.errors.append(error_msg)
@@ -80,8 +87,14 @@ def top_level_coordinator(state: TopLevelState, runtime_context: dict) -> TopLev
         logger.info(f"Starting top level coordinator for request {state.request_id}")
 
         # Initialize state with dashboard context if not already done
-        if not state.file_ids and state.dashboard_id and runtime_context.get('supabase_client'):
-            logger.info(f"Initializing dashboard context for dashboard {state.dashboard_id}")
+        if (
+            not state.file_ids
+            and state.dashboard_id
+            and runtime_context.get("supabase_client")
+        ):
+            logger.info(
+                f"Initializing dashboard context for dashboard {state.dashboard_id}"
+            )
             state = _initialize_dashboard_context(state, runtime_context)
 
         if not state.started_at:

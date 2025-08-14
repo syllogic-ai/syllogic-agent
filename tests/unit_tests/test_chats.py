@@ -8,10 +8,12 @@ from unittest.mock import Mock
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "src"))
+sys.path.insert(
+    0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "src")
+)
 
 from actions.chats import append_chat_message, get_message_history
-from agent.models import ChatMessageInput, Chat, ConversationMessage
+from agent.models import Chat, ChatMessageInput, ConversationMessage
 
 
 class TestAppendChatMessage:
@@ -58,9 +60,7 @@ class TestAppendChatMessage:
 
         # Execute function
         message_input = ChatMessageInput(
-            chat_id="chat-123",
-            role="user", 
-            message="New message"
+            chat_id="chat-123", role="user", message="New message"
         )
         result = append_chat_message(mock_supabase, message_input)
 
@@ -101,7 +101,7 @@ class TestAppendChatMessage:
             role="user",
             message="New message",
             context_widget_ids=["widget-1", "widget-2"],
-            target_widget_type="chart"
+            target_widget_type="chart",
         )
         result = append_chat_message(mock_supabase, message_input)
 
@@ -117,9 +117,7 @@ class TestAppendChatMessage:
         mock_supabase.table().select().eq().single().execute.return_value = mock_result
 
         message_input = ChatMessageInput(
-            chat_id="chat-123",
-            role="user",
-            message="message"
+            chat_id="chat-123", role="user", message="message"
         )
         with pytest.raises(Exception, match="Chat chat-123 not found"):
             append_chat_message(mock_supabase, message_input)
@@ -149,9 +147,7 @@ class TestAppendChatMessage:
         mock_update_eq.execute.return_value = mock_update_result
 
         message_input = ChatMessageInput(
-            chat_id="chat-123",
-            role="user",
-            message="message"
+            chat_id="chat-123", role="user", message="message"
         )
         with pytest.raises(Exception, match="Failed to update chat"):
             append_chat_message(mock_supabase, message_input)
@@ -163,9 +159,7 @@ class TestAppendChatMessage:
         )
 
         message_input = ChatMessageInput(
-            chat_id="chat-123",
-            role="user",
-            message="message"
+            chat_id="chat-123", role="user", message="message"
         )
         with pytest.raises(Exception, match="DB Error"):
             append_chat_message(mock_supabase, message_input)

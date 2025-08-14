@@ -14,17 +14,17 @@ import requests
 from supabase import Client
 
 from agent.models import CreateWidgetInput, UpdateWidgetInput, Widget
+from config import get_supabase_client
 
 logger = logging.getLogger(__name__)
 
 ## Files
 
 
-def get_data_from_file(supabase: Client, file_id: str) -> pd.DataFrame:
+def get_data_from_file(file_id: str) -> pd.DataFrame:
     """Get complete data from a file using its storage path.
 
     Args:
-        supabase: Supabase client instance
         file_id: File identifier
 
     Returns:
@@ -34,6 +34,8 @@ def get_data_from_file(supabase: Client, file_id: str) -> pd.DataFrame:
         Exception: If file not found or data retrieval fails
     """
     try:
+        supabase = get_supabase_client()
+        
         # Get file information from database
         file_info = (
             supabase.table("files")
@@ -90,11 +92,10 @@ def get_data_from_file(supabase: Client, file_id: str) -> pd.DataFrame:
         raise
 
 
-def get_files_from_dashboard(supabase: Client, dashboard_id: str) -> List[str]:
+def get_files_from_dashboard(dashboard_id: str) -> List[str]:
     """Get the list of file IDs associated with a dashboard.
 
     Args:
-        supabase: Supabase client instance
         dashboard_id: Dashboard identifier
 
     Returns:
@@ -104,6 +105,8 @@ def get_files_from_dashboard(supabase: Client, dashboard_id: str) -> List[str]:
         Exception: If dashboard not found or query fails
     """
     try:
+        supabase = get_supabase_client()
+        
         # Query the files table directly using dashboard_id foreign key
         response = (
             supabase.table("files")
@@ -122,11 +125,10 @@ def get_files_from_dashboard(supabase: Client, dashboard_id: str) -> List[str]:
         raise
 
 
-def get_schema_from_file(supabase: Client, file_id: str) -> Dict[str, Any]:
+def get_schema_from_file(file_id: str) -> Dict[str, Any]:
     """Get schema information from a file.
 
     Args:
-        supabase: Supabase client instance
         file_id: File identifier
 
     Returns:
@@ -137,7 +139,7 @@ def get_schema_from_file(supabase: Client, file_id: str) -> Dict[str, Any]:
     """
     try:
         # Get the dataframe
-        df = get_data_from_file(supabase, file_id)
+        df = get_data_from_file(file_id)
 
         # Extract schema information
         schema = {
@@ -172,12 +174,11 @@ def get_schema_from_file(supabase: Client, file_id: str) -> Dict[str, Any]:
 
 
 def get_sample_from_file(
-    supabase: Client, file_id: str, num_rows: int = 3
+    file_id: str, num_rows: int = 3
 ) -> Dict[str, Any]:
     """Get sample data from a file (header + specified number of rows).
 
     Args:
-        supabase: Supabase client instance
         file_id: File identifier
         num_rows: Number of data rows to return (default: 3)
                  Note: This returns header + num_rows, so 4 total rows for num_rows=3
@@ -190,7 +191,7 @@ def get_sample_from_file(
     """
     try:
         # Get the dataframe
-        df = get_data_from_file(supabase, file_id)
+        df = get_data_from_file(file_id)
 
         # Get sample data (header + requested number of rows)
         sample_df = df.head(num_rows)
@@ -217,11 +218,10 @@ def get_sample_from_file(
 ## Widgets
 
 
-def create_widget(supabase: Client, widget_input: CreateWidgetInput) -> Widget:
+def create_widget(widget_input: CreateWidgetInput) -> Widget:
     """Create a new widget in the dashboard.
 
     Args:
-        supabase: Supabase client instance
         widget_input: CreateWidgetInput containing widget creation data
 
     Returns:
@@ -231,6 +231,7 @@ def create_widget(supabase: Client, widget_input: CreateWidgetInput) -> Widget:
         Exception: If widget creation fails
     """
     try:
+        supabase = get_supabase_client()
         widget_id = str(uuid.uuid4())
 
         # Prepare widget data from input model
@@ -274,11 +275,10 @@ def create_widget(supabase: Client, widget_input: CreateWidgetInput) -> Widget:
         raise
 
 
-def update_widget(supabase: Client, update_input: UpdateWidgetInput) -> Widget:
+def update_widget(update_input: UpdateWidgetInput) -> Widget:
     """Update an existing widget with the provided fields.
 
     Args:
-        supabase: Supabase client instance
         update_input: UpdateWidgetInput containing update data
 
     Returns:
@@ -288,6 +288,8 @@ def update_widget(supabase: Client, update_input: UpdateWidgetInput) -> Widget:
         Exception: If widget update fails
     """
     try:
+        supabase = get_supabase_client()
+        
         # Prepare update data
         update_data = {"updated_at": datetime.now().isoformat()}
 
@@ -336,11 +338,10 @@ def update_widget(supabase: Client, update_input: UpdateWidgetInput) -> Widget:
         raise
 
 
-def delete_widget(supabase: Client, widget_id: str) -> bool:
+def delete_widget(widget_id: str) -> bool:
     """Delete a widget from the database.
 
     Args:
-        supabase: Supabase client instance
         widget_id: Widget identifier
 
     Returns:
@@ -350,6 +351,8 @@ def delete_widget(supabase: Client, widget_id: str) -> bool:
         Exception: If widget deletion fails
     """
     try:
+        supabase = get_supabase_client()
+        
         # Delete widget from database
         result = supabase.table("widgets").delete().eq("id", widget_id).execute()
 
@@ -365,7 +368,7 @@ def delete_widget(supabase: Client, widget_id: str) -> bool:
         raise
 
 
-async def get_widget_specs(widget_id: str, supabase: Client) -> Widget:
+async def get_widget_specs(widget_id: str) -> Widget:
     """Get complete widget specifications including all fields from the database.
 
     Args:
@@ -379,6 +382,8 @@ async def get_widget_specs(widget_id: str, supabase: Client) -> Widget:
         Exception: If widget not found or retrieval fails
     """
     try:
+        supabase = get_supabase_client()
+        
         # Get complete widget data from database
         result = (
             supabase.table("widgets").select("*").eq("id", widget_id).single().execute()
@@ -399,7 +404,7 @@ async def get_widget_specs(widget_id: str, supabase: Client) -> Widget:
         # INSERT_YOUR_CODE
 
 
-def get_widgets_from_dashboard_id(dashboard_id: str, supabase: Client) -> List[Widget]:
+def get_widgets_from_dashboard_id(dashboard_id: str) -> List[Widget]:
     """Get all widgets associated with a given dashboard ID.
 
     Args:
@@ -413,6 +418,8 @@ def get_widgets_from_dashboard_id(dashboard_id: str, supabase: Client) -> List[W
         Exception: If retrieval fails
     """
     try:
+        supabase = get_supabase_client()
+        
         result = (
             supabase.table("widgets")
             .select("*")
@@ -427,7 +434,7 @@ def get_widgets_from_dashboard_id(dashboard_id: str, supabase: Client) -> List[W
         raise
 
 
-def get_widget_from_widget_id(widget_id: str, supabase: Client) -> Optional[Widget]:
+def get_widget_from_widget_id(widget_id: str) -> Optional[Widget]:
     """Get a single widget by its widget ID.
 
     Args:
@@ -441,6 +448,8 @@ def get_widget_from_widget_id(widget_id: str, supabase: Client) -> Optional[Widg
         Exception: If retrieval fails
     """
     try:
+        supabase = get_supabase_client()
+        
         result = (
             supabase.table("widgets").select("*").eq("id", widget_id).single().execute()
         )
@@ -454,11 +463,10 @@ def get_widget_from_widget_id(widget_id: str, supabase: Client) -> Optional[Widg
         raise
 
 
-def get_schemas_from_files(supabase: Client, file_ids: List[str]) -> Dict[str, Any]:
+def get_schemas_from_files(file_ids: List[str]) -> Dict[str, Any]:
     """Get schemas from multiple files.
 
     Args:
-        supabase: Supabase client instance
         file_ids: List of file identifiers
 
     Returns:
@@ -471,46 +479,47 @@ def get_schemas_from_files(supabase: Client, file_ids: List[str]) -> Dict[str, A
         schemas = {}
         for file_id in file_ids:
             try:
-                schema = get_schema_from_file(supabase, file_id)
+                schema = get_schema_from_file(file_id)
                 # Convert to FileSchema format expected by models
-                from agent.models import FileSchema, ColumnInfo
-                
+                from agent.models import ColumnInfo, FileSchema
+
                 columns = [
                     ColumnInfo(
                         name=col["name"],
                         type=col["type"],
                         null_count=col["null_count"],
                         unique_count=col["unique_count"],
-                        sample_values=col.get("sample_values", [])
+                        sample_values=col.get("sample_values", []),
                     )
                     for col in schema["columns"]
                 ]
-                
+
                 file_schema = FileSchema(
                     file_id=file_id,
                     columns=columns,
                     total_rows=schema["total_rows"],
-                    total_columns=schema["total_columns"]
+                    total_columns=schema["total_columns"],
                 )
                 schemas[file_id] = file_schema
-                
+
             except Exception as e:
                 logger.warning(f"Could not get schema for file {file_id}: {str(e)}")
                 continue
-                
-        logger.info(f"Retrieved schemas for {len(schemas)} out of {len(file_ids)} files")
+
+        logger.info(
+            f"Retrieved schemas for {len(schemas)} out of {len(file_ids)} files"
+        )
         return schemas
-        
+
     except Exception as e:
         logger.error(f"Error getting schemas from files: {str(e)}")
         raise
 
 
-def get_sample_data_from_files(supabase: Client, file_ids: List[str]) -> Dict[str, Any]:
+def get_sample_data_from_files(file_ids: List[str]) -> Dict[str, Any]:
     """Get sample data from multiple files.
 
     Args:
-        supabase: Supabase client instance
         file_ids: List of file identifiers
 
     Returns:
@@ -523,26 +532,30 @@ def get_sample_data_from_files(supabase: Client, file_ids: List[str]) -> Dict[st
         samples = {}
         for file_id in file_ids:
             try:
-                sample_data = get_sample_from_file(supabase, file_id, num_rows=3)
+                sample_data = get_sample_from_file(file_id, num_rows=3)
                 # Convert to FileSampleData format expected by models
                 from agent.models import FileSampleData
-                
+
                 file_sample = FileSampleData(
                     file_id=file_id,
                     headers=sample_data["headers"],
                     rows=sample_data["rows"],
                     total_rows_in_file=sample_data["total_rows_in_file"],
-                    sample_rows_returned=sample_data["sample_rows_returned"]
+                    sample_rows_returned=sample_data["sample_rows_returned"],
                 )
                 samples[file_id] = file_sample
-                
+
             except Exception as e:
-                logger.warning(f"Could not get sample data for file {file_id}: {str(e)}")
+                logger.warning(
+                    f"Could not get sample data for file {file_id}: {str(e)}"
+                )
                 continue
-                
-        logger.info(f"Retrieved sample data for {len(samples)} out of {len(file_ids)} files")
+
+        logger.info(
+            f"Retrieved sample data for {len(samples)} out of {len(file_ids)} files"
+        )
         return samples
-        
+
     except Exception as e:
         logger.error(f"Error getting sample data from files: {str(e)}")
         raise
@@ -552,14 +565,14 @@ def get_sample_data_from_files(supabase: Client, file_ids: List[str]) -> Dict[st
 __all__ = [
     # File operations
     "get_data_from_file",
-    "get_files_from_dashboard", 
+    "get_files_from_dashboard",
     "get_schema_from_file",
     "get_sample_from_file",
     "get_schemas_from_files",
     "get_sample_data_from_files",
     # Widget operations
     "create_widget",
-    "update_widget", 
+    "update_widget",
     "delete_widget",
     "get_widget_specs",
     "get_widgets_from_dashboard_id",

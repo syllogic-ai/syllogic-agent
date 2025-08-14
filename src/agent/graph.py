@@ -1,7 +1,7 @@
-"""LangGraph implementation that imports properly structured agent from coordinator module.
+"""LangGraph implementation for the Widget Agent System.
 
-This graph module serves as the main entry point and delegates to the properly
-structured top_level_coordinator agent that uses create_react_agent pattern.
+This graph implements a supervisor pattern where a widget_supervisor node
+intelligently routes tasks to specialized worker nodes for widget processing.
 """
 
 from __future__ import annotations
@@ -9,59 +9,59 @@ from __future__ import annotations
 from typing import TypedDict
 
 from langgraph.graph import END, START, StateGraph
-from langgraph.runtime import Runtime
 from supabase import Client
 
-from agent.agents.top_level_coordinator.top_level_coordinator import top_level_coordinator
-from agent.models import TopLevelState
+from agent.agents.widget_agent_team.widget_supervisor import widget_supervisor
+from agent.agents.widget_agent_team.worker_nodes import (
+    data_node,
+    update_task_node,
+    validate_data_node,
+)
+from agent.models import WidgetAgentState
 
 
 class Context(TypedDict):
-    """Context parameters for the chart generation system."""
+    """Context parameters for the widget agent system."""
 
     openai_api_key: str
     model: str
     supabase_url: str
-    supabase_key: str
+    supabase_key: str  # Can be either SUPABASE_SERVICE_KEY or SUPABASE_ANON_KEY
     supabase_client: Client
 
 
-async def coordinator_node(
-    state: TopLevelState, runtime: Runtime[Context]
-) -> TopLevelState:
-    """Coordinator node that delegates to the proper agent module."""
-    try:
-        context = runtime.context or {}
+def build_widget_agent_graph():
+    """Builds and compiles the complete widget agent graph."""
 
-        if not state.user_prompt:
-            state.errors.append("No user prompt provided")
-            state.should_continue = False
-            return state
+    # Initialize the graph with Pydantic state
+    builder = StateGraph(WidgetAgentState)
 
-        # Delegate to the properly structured coordinator agent
-        return top_level_coordinator(state, context)
+    # Add the widget_supervisor node
+    builder.add_node("widget_supervisor", widget_supervisor)
 
-    except Exception as e:
-        error_msg = f"Error in coordinator node: {str(e)}"
-        state.errors.append(error_msg)
-        state.should_continue = False
-        state.result = f"Error: {error_msg}"
-        return state
+    # Add all worker nodes
+    builder.add_node("data", data_node)
+    builder.add_node("validate_data", validate_data_node)
+    builder.add_node("update_task", update_task_node)
+
+    # Define edges - START goes to widget_supervisor
+    builder.add_edge(START, "widget_supervisor")
+
+    # All worker nodes report back to widget_supervisor
+    # The supervisor uses Command objects to route dynamically
+    builder.add_edge("widget_supervisor", "data")
+    builder.add_edge("widget_supervisor", "validate_data")
+    builder.add_edge("widget_supervisor", "update_task")
+    builder.add_edge("widget_supervisor", END)
+
+    # Compile the graph (LangGraph Cloud handles persistence automatically)
+    graph = builder.compile(name="Widget Agent System")
+
+    return graph
 
 
-# Build the graph following LangGraph best practices
-builder = StateGraph(TopLevelState, context_schema=Context)
-
-# Add single coordinator node
-builder.add_node("coordinator", coordinator_node)
-
-# Add edges - direct flow from start to coordinator to end
-builder.add_edge(START, "coordinator")
-builder.add_edge("coordinator", END)
-
-# Compile the graph
-graph = builder.compile(name="Chart Generation System")
-
+# Build and export the graph
+graph = build_widget_agent_graph()
 
 # Export for langgraph server
-__all__ = ["graph"]
+__all__ = ["graph", "build_widget_agent_graph"]

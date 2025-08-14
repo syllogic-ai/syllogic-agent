@@ -9,7 +9,9 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "src"))
+sys.path.insert(
+    0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "src")
+)
 
 from actions.jobs import (
     cleanup_old_jobs,
@@ -25,7 +27,7 @@ from actions.jobs import (
     update_job_progress,
     update_job_status,
 )
-from agent.models import CreateJobInput, UpdateJobInput, Job
+from agent.models import CreateJobInput, Job, UpdateJobInput
 
 
 class TestCreateJob:
@@ -46,9 +48,7 @@ class TestCreateJob:
         mock_supabase.table().insert().execute.return_value = mock_result
 
         job_input = CreateJobInput(
-            job_id="job-123",
-            user_id="user-456",
-            dashboard_id="dashboard-789"
+            job_id="job-123", user_id="user-456", dashboard_id="dashboard-789"
         )
         result = create_job(mock_supabase, job_input)
 
@@ -78,7 +78,7 @@ class TestCreateJob:
             user_id="user-456",
             dashboard_id="dashboard-789",
             status="processing",
-            progress=25
+            progress=25,
         )
         create_job(mock_supabase, job_input)
 
@@ -93,9 +93,7 @@ class TestCreateJob:
         mock_supabase.table().insert().execute.return_value = mock_result
 
         job_input = CreateJobInput(
-            job_id="job-123",
-            user_id="user-456",
-            dashboard_id="dashboard-789"
+            job_id="job-123", user_id="user-456", dashboard_id="dashboard-789"
         )
         with pytest.raises(Exception, match="Failed to create job job-123"):
             create_job(mock_supabase, job_input)
@@ -105,9 +103,7 @@ class TestCreateJob:
         mock_supabase.table().insert().execute.side_effect = Exception("DB Error")
 
         job_input = CreateJobInput(
-            job_id="job-123",
-            user_id="user-456",
-            dashboard_id="dashboard-789"
+            job_id="job-123", user_id="user-456", dashboard_id="dashboard-789"
         )
         with pytest.raises(Exception, match="DB Error"):
             create_job(mock_supabase, job_input)
@@ -124,9 +120,7 @@ class TestUpdateJobStatus:
         mock_supabase.table().update().eq().execute.return_value = mock_result
 
         update_input = UpdateJobInput(
-            job_id="job-123",
-            status="processing",
-            progress=50
+            job_id="job-123", status="processing", progress=50
         )
         result = update_job_status(mock_supabase, update_input)
 
@@ -145,9 +139,7 @@ class TestUpdateJobStatus:
         mock_supabase.table().update().eq().execute.return_value = mock_result
 
         update_input = UpdateJobInput(
-            job_id="job-123",
-            status="failed",
-            error="Test error message"
+            job_id="job-123", status="failed", error="Test error message"
         )
         update_job_status(mock_supabase, update_input)
 
@@ -155,41 +147,41 @@ class TestUpdateJobStatus:
         assert update_call["status"] == "failed"
         assert update_call["error"] == "Test error message"
 
-    def test_update_job_status_processing_sets_started_at(self, mock_supabase, sample_job_data):
+    def test_update_job_status_processing_sets_started_at(
+        self, mock_supabase, sample_job_data
+    ):
         """Test that processing status sets started_at timestamp."""
         sample_job_data.update({"status": "processing"})
         mock_result = Mock()
         mock_result.data = [sample_job_data]
         mock_supabase.table().update().eq().execute.return_value = mock_result
 
-        update_input = UpdateJobInput(
-            job_id="job-123",
-            status="processing"
-        )
+        update_input = UpdateJobInput(job_id="job-123", status="processing")
         update_job_status(mock_supabase, update_input)
 
         update_call = mock_supabase.table().update.call_args[0][0]
         assert update_call["status"] == "processing"
         assert "started_at" in update_call
 
-    def test_update_job_status_completed_sets_completed_at(self, mock_supabase, sample_job_data):
+    def test_update_job_status_completed_sets_completed_at(
+        self, mock_supabase, sample_job_data
+    ):
         """Test that completed status sets completed_at timestamp."""
         sample_job_data.update({"status": "completed"})
         mock_result = Mock()
         mock_result.data = [sample_job_data]
         mock_supabase.table().update().eq().execute.return_value = mock_result
 
-        update_input = UpdateJobInput(
-            job_id="job-123",
-            status="completed"
-        )
+        update_input = UpdateJobInput(job_id="job-123", status="completed")
         update_job_status(mock_supabase, update_input)
 
         update_call = mock_supabase.table().update.call_args[0][0]
         assert update_call["status"] == "completed"
         assert "completed_at" in update_call
 
-    def test_update_job_status_calculates_processing_time(self, mock_supabase, sample_job_data):
+    def test_update_job_status_calculates_processing_time(
+        self, mock_supabase, sample_job_data
+    ):
         """Test that processing time calculation doesn't crash when job completion status is set."""
         # Mock update result
         sample_job_data.update({"status": "completed"})
@@ -197,13 +189,10 @@ class TestUpdateJobStatus:
         mock_result.data = [sample_job_data]
         mock_supabase.table().update().eq().execute.return_value = mock_result
 
-        update_input = UpdateJobInput(
-            job_id="job-123",
-            status="completed"
-        )
+        update_input = UpdateJobInput(job_id="job-123", status="completed")
         # This should not crash, even if processing time calculation fails
         result = update_job_status(mock_supabase, update_input)
-        
+
         # Just verify the function completes and returns a Job
         assert isinstance(result, Job)
         assert result.status == "completed"
@@ -214,10 +203,7 @@ class TestUpdateJobStatus:
         mock_result.data = None
         mock_supabase.table().update().eq().execute.return_value = mock_result
 
-        update_input = UpdateJobInput(
-            job_id="job-123",
-            status="processing"
-        )
+        update_input = UpdateJobInput(job_id="job-123", status="processing")
         result = update_job_status(mock_supabase, update_input)
 
         assert isinstance(result, Job)
