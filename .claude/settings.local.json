@@ -11,7 +11,8 @@
       "Bash(PYTHONPATH=src python -c \"from agent.graph import build_widget_agent_graph; print(''Graph builder imported successfully'')\")",
       "Bash(PYTHONPATH=src python -m py_compile src/agent/agents/widget_agent_team/worker_nodes.py)",
       "Bash(PYTHONPATH=src python -m py_compile src/agent/graph.py)",
-      "Bash(PYTHONPATH=src python:*)"
+      "Bash(PYTHONPATH=src python:*)",
+      "WebFetch(domain:langchain-ai.github.io)"
     ],
     "deny": [],
     "ask": []
