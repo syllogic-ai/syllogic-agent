@@ -42,6 +42,97 @@ from config import create_e2b_sandbox
 # No global variables - use Command objects for immediate state updates
 
 
+def _analyze_schema_validation_error(result_data, validation_error):
+    """
+    Analyze schema validation errors and provide detailed feedback about what's wrong.
+
+    Args:
+        result_data: The data that failed validation
+        validation_error: The Pydantic validation error
+
+    Returns:
+        str: Detailed error message explaining what's wrong
+    """
+    try:
+        from pydantic import ValidationError
+
+        error_details = []
+
+        # Check if it's a Pydantic ValidationError
+        if isinstance(validation_error, ValidationError):
+            for error in validation_error.errors():
+                loc = (
+                    " -> ".join(str(x) for x in error["loc"])
+                    if error["loc"]
+                    else "root"
+                )
+                msg = error["msg"]
+                error_type = error["type"]
+
+                if error_type == "missing":
+                    error_details.append(f"Missing required field: '{loc}'")
+                elif error_type == "type_error":
+                    error_details.append(f"Wrong type for field '{loc}': {msg}")
+                elif error_type == "literal_error":
+                    error_details.append(f"Invalid value for field '{loc}': {msg}")
+                elif error_type == "value_error":
+                    error_details.append(f"Invalid value for field '{loc}': {msg}")
+                else:
+                    error_details.append(
+                        f"Error in field '{loc}': {msg} (type: {error_type})"
+                    )
+        else:
+            error_details.append(f"Validation error: {str(validation_error)}")
+
+        # Additional analysis of the result structure
+        if isinstance(result_data, dict):
+            schema_fields = {
+                "chartType": "Must be one of: line, bar, pie, area, radial, kpi, table",
+                "title": "Must be a string describing the chart",
+                "description": "Must be a string explaining what the chart shows",
+                "data": "Must be an array of objects containing the actual data points",
+                "chartConfig": "Must be a dictionary with data field names as keys",
+                "xAxisConfig": "Must be an object with 'dataKey' field",
+            }
+
+            missing_fields = []
+            wrong_types = []
+
+            for field, description in schema_fields.items():
+                if field not in result_data:
+                    missing_fields.append(f"'{field}': {description}")
+                elif field == "data" and not isinstance(result_data[field], list):
+                    wrong_types.append(
+                        f"'{field}': Expected array, got {type(result_data[field]).__name__}"
+                    )
+                elif field in ["chartConfig", "xAxisConfig"] and not isinstance(
+                    result_data[field], dict
+                ):
+                    wrong_types.append(
+                        f"'{field}': Expected object, got {type(result_data[field]).__name__}"
+                    )
+                elif field in ["title", "description", "chartType"] and not isinstance(
+                    result_data[field], str
+                ):
+                    wrong_types.append(
+                        f"'{field}': Expected string, got {type(result_data[field]).__name__}"
+                    )
+
+            if missing_fields:
+                error_details.extend([f"Missing: {field}" for field in missing_fields])
+            if wrong_types:
+                error_details.extend([f"Type error: {field}" for field in wrong_types])
+
+        # Combine all error details
+        if error_details:
+            return "Validation errors: " + "; ".join(error_details)
+        else:
+            return f"Schema validation failed: {str(validation_error)}"
+
+    except Exception as e:
+        return f"Error analyzing validation failure: {str(e)}. Original error: {str(validation_error)}"
+
+
 def get_chart_config_schema_string():
     """
     Programmatically extract the ChartConfigSchema as a formatted string for code generation prompts.
@@ -554,18 +645,45 @@ else:
                     result_json = output[start_idx:end_idx].strip()
                     parsed_result = json.loads(result_json)
 
-                    # Return Command with execution result
-                    success_msg = f"Code executed successfully. Result: {json.dumps(parsed_result, indent=2)[:500]}{'...' if len(str(parsed_result)) > 500 else ''}"
-                    return Command(
-                        update={
-                            "code_execution_result": parsed_result,
-                            "messages": [
-                                ToolMessage(
-                                    content=success_msg, tool_call_id=tool_call_id
-                                )
-                            ],
-                        }
-                    )
+                    # Validate the result against ChartConfigSchema
+                    try:
+                        validated_result = ChartConfigSchema(**parsed_result)
+                        # If validation succeeds, use the validated result
+                        validated_dict = validated_result.model_dump()
+
+                        success_msg = f"Code executed successfully and passed schema validation. Result: {json.dumps(validated_dict, indent=2)[:500]}{'...' if len(str(validated_dict)) > 500 else ''}"
+                        return Command(
+                            update={
+                                "code_execution_result": validated_dict,
+                                "messages": [
+                                    ToolMessage(
+                                        content=success_msg, tool_call_id=tool_call_id
+                                    )
+                                ],
+                            }
+                        )
+                    except Exception as validation_error:
+                        # Schema validation failed - create detailed error message
+                        schema_error_details = _analyze_schema_validation_error(
+                            parsed_result, validation_error
+                        )
+
+                        error_msg = f"Code execution succeeded but result does not match ChartConfigSchema. {schema_error_details}"
+                        return Command(
+                            update={
+                                "code_execution_result": {
+                                    "error": "Schema validation failed",
+                                    "validation_details": schema_error_details,
+                                    "raw_result": parsed_result,
+                                },
+                                "error_messages": state.error_messages + [error_msg],
+                                "messages": [
+                                    ToolMessage(
+                                        content=error_msg, tool_call_id=tool_call_id
+                                    )
+                                ],
+                            }
+                        )
                 else:
                     # Get main execution output for debugging
                     main_output = ""
@@ -728,10 +846,12 @@ PANDAS DATE/TIME REQUIREMENTS:
 - For date/time extraction, use dt accessor: df['date_column'].dt.year, df['date_column'].dt.month
 - For date comparisons, ensure both sides are datetime objects
 - When parsing custom date formats, use: pd.to_datetime(df['date_column'], format='%d/%m/%Y')
-- For date truncation, use dt.floor(): df['date_column'].dt.floor('D') for daily, 'M' for monthly
+- For date truncation by month: df['date_column'].dt.to_period('M').dt.start_time (NOT dt.floor('M'))
+- For date truncation by day: df['date_column'].dt.floor('D')
 - Use dt.strftime() for date formatting: df['date_column'].dt.strftime('%Y-%m-%d')
 - Handle timezone-aware dates using dt.tz_localize() or dt.tz_convert()
 - For date arithmetic, use pd.Timedelta: df['date_column'] + pd.Timedelta(days=1)
+- CRITICAL: Never use dt.floor('M') - use dt.to_period('M').dt.start_time for monthly grouping
 
 REQUIRED OUTPUT SCHEMA:
 Your generated Python code MUST produce a result that follows this exact schema structure:
@@ -877,6 +997,7 @@ class WorkerNodes:
             operation: Literal["CREATE", "UPDATE", "DELETE"]
             widget_type: Literal["line", "bar", "pie", "area", "radial", "kpi", "table"]
             widget_id: str
+            dashboard_id: str
             file_ids: List[str]
             file_sample_data: Annotated[Optional[List[FileSampleData]], take_last]
             file_schemas: Annotated[Optional[List[FileSchema]], take_last]
@@ -892,6 +1013,10 @@ class WorkerNodes:
             iteration_count: Annotated[Optional[int], take_last]
             current_step: Annotated[Optional[str], take_last]
             widget_supervisor_reasoning: Annotated[Optional[str], take_last]
+            # Database operation completion flags
+            widget_creation_completed: Annotated[Optional[bool], take_last]
+            widget_update_completed: Annotated[Optional[bool], take_last]
+            widget_deletion_completed: Annotated[Optional[bool], take_last]
             created_at: datetime
             updated_at: Annotated[Optional[datetime], take_last]
 
@@ -950,6 +1075,7 @@ Please:
                 "operation": state.operation,
                 "widget_type": state.widget_type,
                 "widget_id": state.widget_id,
+                "dashboard_id": state.dashboard_id,
                 "file_ids": state.file_ids,
                 "file_sample_data": state.file_sample_data or [],
                 "file_schemas": state.file_schemas or [],
@@ -965,6 +1091,10 @@ Please:
                 "iteration_count": state.iteration_count,
                 "current_step": state.current_step,
                 "widget_supervisor_reasoning": state.widget_supervisor_reasoning,
+                # Database operation completion flags
+                "widget_creation_completed": state.widget_creation_completed,
+                "widget_update_completed": state.widget_update_completed,
+                "widget_deletion_completed": state.widget_deletion_completed,
                 "created_at": state.created_at,
                 "updated_at": state.updated_at,
             }
@@ -1091,40 +1221,49 @@ Please:
             ).with_structured_output(DataValidationResult)
 
             validation_prompt = f"""
-You are a data validation expert. Analyze the generated data against the user requirements and task description.
+You are a data validation expert specializing in sample-based quality assessment. Your task is to evaluate whether the generated data sample is "on the right track" and aligns with user requirements.
+
+⚠️ CRITICAL CONTEXT: You are analyzing only a SAMPLE (first 10 records) of what may be a much larger dataset. Do NOT penalize for missing data points that aren't in the sample - focus on whether the sample demonstrates correct alignment.
 
 TASK DESCRIPTION: {state.task_instructions}
 USER PROMPT: {state.user_prompt}
 WIDGET TYPE: {state.widget_type}
 OPERATION: {state.operation}
 
-GENERATED DATA SAMPLE (first 10 items):
+GENERATED CHART CONFIG SAMPLE (first 10 records only):
 {json.dumps(sample_data, indent=2, default=str)}
 
-DATA SCHEMA ANALYSIS:
+CHART CONFIG ANALYSIS:
 {json.dumps(data_schema, indent=2)}
 
-VALIDATION CRITERIA:
-1. Does the data structure match the widget type requirements?
-   - Line/Area charts: dict with 'x' and 'y' arrays
-   - Bar charts: dict with 'categories' and 'values' arrays  
-   - Pie charts: array of objects with 'label' and 'value' properties
-   - Tables: array of objects (records)
-   - KPI: dict with 'value' property
+SAMPLE CONTEXT:
+Original dataset: {sample_data.get("_sampling_info", {}).get("original_count", "unknown")} records
+Sample shown: {sample_data.get("_sampling_info", {}).get("sampled_count", "unknown")} records
+Is sampled: {sample_data.get("_sampling_info", {}).get("is_sampled", "unknown")}
 
-2. Does the data content align with the user's request?
-3. Are the data types appropriate?
-4. Is the data complete and not empty?
-5. Does the data make sense for the specified operation?
+EVALUATION CRITERIA (Sample-Based):
+✅ Structure Validation: Is the ChartConfigSchema properly formed with all required fields?
+✅ Data Alignment: Do the sample records match the user's request (correct field names, logical values)?
+✅ Chart Configuration: Are chartConfig mappings sensible for the data fields present?
+✅ Axis Setup: Is xAxisConfig.dataKey pointing to a valid field that exists in the sample?
+✅ Metadata Quality: Are title/description relevant and descriptive?
+✅ Data Logic: Does the sample data follow patterns that make sense for the request?
+
+VALIDATION APPROACH:
+- HIGH CONFIDENCE (85+): Sample clearly demonstrates correct approach, structure, and alignment
+- MEDIUM CONFIDENCE (70-84): Sample shows mostly correct approach with minor issues
+- LOW CONFIDENCE (<70): Sample has structural problems or clear misalignment
+
+KEY PRINCIPLE: If the sample is well-structured and shows the right data patterns, assume the full dataset follows the same logic. Do NOT reduce confidence just because you're seeing a subset.
 
 Provide:
-- is_valid: Boolean indicating if data meets all requirements
-- confidence_level: 0-100 confidence score
-- explanation: Detailed explanation of your assessment
-- missing_requirements: List specific missing elements if validation fails
-- data_quality_issues: List any data quality problems identified
+- is_valid: Boolean - true if sample demonstrates correct direction and structure
+- confidence_level: 0-100 score based on sample quality and alignment (not completeness)
+- explanation: Focus on whether the sample indicates success for the full dataset
+- missing_requirements: Only list structural/configuration issues visible in the sample
+- data_quality_issues: Only list problems evident in the actual sample data shown
 
-If confidence is below 80, be very specific about what's wrong and what needs to be fixed.
+Remember: You're validating the APPROACH and QUALITY, not the completeness!
 """
 
             # Get validation result from LLM
@@ -1139,13 +1278,12 @@ If confidence is below 80, be very specific about what's wrong and what needs to
             )
 
             if data_is_valid:
-                # Mark task as completed if validation passes
+                # Continue to DB operations after validation passes
                 return Command(
                     goto="widget_supervisor",
                     update={
                         "data_validated": True,
                         "data": state.code_execution_result,
-                        "task_status": "completed",
                         "updated_at": datetime.now(),
                         "messages": [
                             ToolMessage(
@@ -1197,59 +1335,254 @@ If confidence is below 80, be very specific about what's wrong and what needs to
                 },
             )
 
-    def _get_data_sample(self, data):
-        """Extract first 10 rows/items from generated data for validation."""
-        if isinstance(data, list):
-            return data[:10]
-        elif isinstance(data, dict):
-            if "x" in data and "y" in data:
-                # Chart data - sample both x and y
-                return {
-                    "x": data["x"][:10] if isinstance(data["x"], list) else data["x"],
-                    "y": data["y"][:10] if isinstance(data["y"], list) else data["y"],
-                }
-            elif "categories" in data and "values" in data:
-                # Bar chart data
-                return {
-                    "categories": data["categories"][:10]
-                    if isinstance(data["categories"], list)
-                    else data["categories"],
-                    "values": data["values"][:10]
-                    if isinstance(data["values"], list)
-                    else data["values"],
-                }
-            else:
-                # Generic dict - return first 10 key-value pairs
-                items = list(data.items())[:10]
-                return dict(items)
-        else:
-            return data  # Return as-is for other types
+    def _get_data_sample(self, chart_config_data):
+        """
+        Extract first 10 records from ChartConfigSchema data for validation.
 
-    def _analyze_data_structure(self, data):
-        """Analyze the structure and types of generated data."""
-        if isinstance(data, list):
-            return {
-                "type": "array",
-                "length": len(data),
-                "item_type": type(data[0]).__name__ if data else "unknown",
-                "sample_keys": list(data[0].keys())
-                if data and isinstance(data[0], dict)
-                else None,
-            }
-        elif isinstance(data, dict):
-            return {
-                "type": "object",
-                "keys": list(data.keys()),
-                "key_types": {k: type(v).__name__ for k, v in data.items()},
-                "array_lengths": {
-                    k: len(v) if isinstance(v, list) else None for k, v in data.items()
-                },
+        Args:
+            chart_config_data: Dictionary following ChartConfigSchema structure
+
+        Returns:
+            Dictionary: Complete ChartConfigSchema structure with sampled data (first 10 records)
+        """
+        if not isinstance(chart_config_data, dict):
+            # Fallback for non-dict data (shouldn't happen with validated schema)
+            return chart_config_data
+
+        # Create a copy of the full schema
+        sampled_result = chart_config_data.copy()
+
+        # Extract and sample the data array
+        if "data" in chart_config_data and isinstance(chart_config_data["data"], list):
+            # Get first 10 records from the data array
+            original_data = chart_config_data["data"]
+            sampled_data = original_data[:10]
+
+            # Update the result with sampled data
+            sampled_result["data"] = sampled_data
+
+            # Add metadata about sampling
+            sampled_result["_sampling_info"] = {
+                "original_count": len(original_data),
+                "sampled_count": len(sampled_data),
+                "is_sampled": len(original_data) > 10,
             }
         else:
-            return {
-                "type": type(data).__name__,
-                "value": str(data)[:100],  # First 100 chars
+            # If data is not a list or doesn't exist, return as-is with warning
+            sampled_result["_sampling_info"] = {
+                "original_count": 0,
+                "sampled_count": 0,
+                "is_sampled": False,
+                "warning": "Data field is not a list or is missing",
             }
+
+        return sampled_result
+
+    def _analyze_data_structure(self, chart_config_data):
+        """Analyze the structure and types of ChartConfigSchema data."""
+        if not isinstance(chart_config_data, dict):
+            return {
+                "type": type(chart_config_data).__name__,
+                "value": str(chart_config_data)[:100],
+            }
+
+        analysis = {
+            "type": "ChartConfigSchema",
+            "schema_fields": {},
+            "data_analysis": {},
+        }
+
+        # Analyze each schema field
+        schema_fields = [
+            "chartType",
+            "title",
+            "description",
+            "data",
+            "chartConfig",
+            "xAxisConfig",
+        ]
+        for field in schema_fields:
+            if field in chart_config_data:
+                field_value = chart_config_data[field]
+                analysis["schema_fields"][field] = {
+                    "type": type(field_value).__name__,
+                    "present": True,
+                }
+
+                # Special analysis for data field
+                if field == "data" and isinstance(field_value, list):
+                    analysis["schema_fields"][field].update(
+                        {
+                            "length": len(field_value),
+                            "sample_keys": list(field_value[0].keys())
+                            if field_value and isinstance(field_value[0], dict)
+                            else None,
+                            "item_type": type(field_value[0]).__name__
+                            if field_value
+                            else "unknown",
+                        }
+                    )
+                # Special analysis for chartConfig
+                elif field == "chartConfig" and isinstance(field_value, dict):
+                    analysis["schema_fields"][field].update(
+                        {
+                            "config_keys": list(field_value.keys()),
+                            "config_count": len(field_value),
+                        }
+                    )
+                # Special analysis for xAxisConfig
+                elif field == "xAxisConfig" and isinstance(field_value, dict):
+                    analysis["schema_fields"][field].update(
+                        {"dataKey": field_value.get("dataKey", "not_specified")}
+                    )
+            else:
+                analysis["schema_fields"][field] = {"type": "missing", "present": False}
+
+        # Add sampling info if present
+        if "_sampling_info" in chart_config_data:
+            analysis["sampling_info"] = chart_config_data["_sampling_info"]
+
+        return analysis
+
+    def db_operations_node(self, state: WidgetAgentState) -> Command:
+        """
+        Database operations node that handles CREATE/UPDATE/DELETE operations for widgets.
+        Uses create_widget, update_widget, delete_widget from dashboard.py.
+        """
+        try:
+            import uuid
+            from actions.dashboard import create_widget, update_widget, delete_widget
+            from agent.models import CreateWidgetInput, UpdateWidgetInput
+
+            # Extract operation type
+            operation = state.operation
+            
+            # Extract title from code_execution_result
+            title = state.code_execution_result.get("title", state.title)
+            
+            # Use widget_type from state
+            widget_type = state.widget_type
+            
+            # Use dashboard_id from state
+            dashboard_id = state.dashboard_id
+
+            if operation == "CREATE":
+                # Generate widget_id as "wid_" + uuid() if not already provided
+                widget_id = state.widget_id
+                if not widget_id:
+                    widget_id = f"wid_{str(uuid.uuid4())}"
+                
+                # Create widget input
+                create_input = CreateWidgetInput(
+                    dashboard_id=dashboard_id,
+                    title=title,
+                    widget_type=widget_type,
+                    config=state.code_execution_result,  # Pass full code_execution_result as config
+                    chat_id=state.chat_id,
+                    description=state.description,
+                    data={"data": state.code_execution_result.get("data", [])},  # Wrap data array in dictionary
+                )
+                
+                # Create widget in database
+                created_widget = create_widget(create_input)
+                
+                success_msg = f"✅ DATABASE OPERATION COMPLETE: Successfully created widget '{title}' with ID: {created_widget.id}. The entire widget creation task is now COMPLETED. All data has been processed, validated, and persisted to the database."
+                return Command(
+                    goto="widget_supervisor",
+                    update={
+                        "widget_id": created_widget.id,
+                        "updated_at": datetime.now(),
+                        "widget_creation_completed": True,  # Clear completion signal
+                        "messages": [
+                            ToolMessage(
+                                content=success_msg,
+                                tool_call_id="db_create_complete",
+                            )
+                        ],
+                    },
+                )
+                
+            elif operation == "UPDATE":
+                # Update existing widget
+                update_input = UpdateWidgetInput(
+                    widget_id=state.widget_id,
+                    title=title,
+                    widget_type=widget_type,
+                    config=state.code_execution_result,  # Pass full code_execution_result as config
+                    chat_id=state.chat_id,
+                    description=state.description,
+                    data={"data": state.code_execution_result.get("data", [])},  # Wrap data array in dictionary
+                )
+                
+                # Update widget in database
+                updated_widget = update_widget(update_input)
+                
+                success_msg = f"✅ DATABASE OPERATION COMPLETE: Successfully updated widget '{title}' with ID: {state.widget_id}. The entire widget update task is now COMPLETED. All data has been processed, validated, and persisted to the database."
+                return Command(
+                    goto="widget_supervisor",
+                    update={
+                        "updated_at": datetime.now(),
+                        "widget_update_completed": True,  # Clear completion signal
+                        "messages": [
+                            ToolMessage(
+                                content=success_msg,
+                                tool_call_id="db_update_complete",
+                            )
+                        ],
+                    },
+                )
+                
+            elif operation == "DELETE":
+                # Delete widget from database
+                deletion_success = delete_widget(state.widget_id)
+                
+                if deletion_success:
+                    success_msg = f"✅ DATABASE OPERATION COMPLETE: Successfully deleted widget with ID: {state.widget_id}. The entire widget deletion task is now COMPLETED."
+                    return Command(
+                        goto="widget_supervisor",
+                        update={
+                            "updated_at": datetime.now(),
+                            "widget_deletion_completed": True,  # Clear completion signal
+                            "messages": [
+                                ToolMessage(
+                                    content=success_msg,
+                                    tool_call_id="db_delete_complete",
+                                )
+                            ],
+                        },
+                    )
+                else:
+                    error_msg = f"Failed to delete widget with ID: {state.widget_id} (widget not found)"
+                    return Command(
+                        goto="widget_supervisor",
+                        update={
+                            "error_messages": state.error_messages + [error_msg],
+                            "task_status": "failed",
+                            "updated_at": datetime.now(),
+                        },
+                    )
+            else:
+                # Invalid operation
+                error_msg = f"Invalid operation '{operation}'. Must be CREATE, UPDATE, or DELETE"
+                return Command(
+                    goto="widget_supervisor",
+                    update={
+                        "error_messages": state.error_messages + [error_msg],
+                        "task_status": "failed",
+                        "updated_at": datetime.now(),
+                    },
+                )
+
+        except Exception as e:
+            error_msg = f"Database operations error: {str(e)}"
+            return Command(
+                goto="widget_supervisor",
+                update={
+                    "error_messages": state.error_messages + [error_msg],
+                    "task_status": "failed",
+                    "updated_at": datetime.now(),
+                },
+            )
 
 
 # Create lazy singleton instance
@@ -1275,6 +1608,11 @@ def validate_data_node(state: WidgetAgentState) -> Command:
     return get_worker_nodes().validate_data_node(state)
 
 
+def db_operations_node(state: WidgetAgentState) -> Command:
+    """Lazy wrapper for db_operations_node."""
+    return get_worker_nodes().db_operations_node(state)
+
+
 # Export tools
 __all__ = [
     "fetch_data_tool",
@@ -1283,5 +1621,6 @@ __all__ = [
     "get_chart_config_schema_string",
     "data_node",
     "validate_data_node",
+    "db_operations_node",
     "get_worker_nodes",
 ]

@@ -21,6 +21,7 @@ from agent.agents.widget_agent_team.widget_supervisor import widget_supervisor
 from agent.agents.widget_agent_team.worker_nodes import (
     data_node,
     validate_data_node,
+    db_operations_node,
 )
 from agent.models import WidgetAgentState
 
@@ -57,6 +58,7 @@ def build_widget_agent_graph():
     # Add all worker nodes
     builder.add_node("data", data_node)
     builder.add_node("validate_data", validate_data_node)
+    builder.add_node("db_operations_node", db_operations_node)
 
     # Define edges - START goes to widget_supervisor
     builder.add_edge(START, "widget_supervisor")
@@ -64,6 +66,7 @@ def build_widget_agent_graph():
     # Worker nodes return to supervisor for continued routing
     builder.add_edge("data", "widget_supervisor")
     builder.add_edge("validate_data", "widget_supervisor")
+    builder.add_edge("db_operations_node", "widget_supervisor")
 
     # Compile the graph
     graph = builder.compile(name="Widget Agent System")

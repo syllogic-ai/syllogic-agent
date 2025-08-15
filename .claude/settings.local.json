@@ -15,7 +15,10 @@
       "WebFetch(domain:langchain-ai.github.io)",
       "Bash(pip install:*)",
       "WebFetch(domain:e2b.dev)",
-      "WebFetch(domain:context7.com)"
+      "WebFetch(domain:context7.com)",
+      "Bash(env)",
+      "WebSearch",
+      "WebFetch(domain:python.langchain.com)"
     ],
     "deny": [],
     "ask": []

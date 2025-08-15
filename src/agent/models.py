@@ -98,8 +98,8 @@ class SupervisorDecision(BaseModel):
 
     next_node: Literal[
         "data",
-        "validate_data",
-        "update_task",
+        "validate_data", 
+        "db_operations_node",
         "end",
     ]
     reasoning: str
@@ -122,6 +122,8 @@ class WidgetAgentState(BaseModel):
     operation: Literal["CREATE", "UPDATE", "DELETE"]
     widget_type: Literal["line", "bar", "pie", "area", "radial", "kpi", "table"]
     widget_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    dashboard_id: str = Field(description="Dashboard identifier for the widget")
+    chat_id: Optional[str] = Field(default=None, description="Chat ID if created from chat")
 
     # File context
     file_ids: List[str] = Field(default_factory=list)
@@ -145,6 +147,11 @@ class WidgetAgentState(BaseModel):
     iteration_count: int = 0
     current_step: Optional[str] = None
     widget_supervisor_reasoning: Optional[str] = None
+    
+    # Database operation completion flags
+    widget_creation_completed: bool = False
+    widget_update_completed: bool = False
+    widget_deletion_completed: bool = False
 
     # Timestamps
     created_at: datetime = Field(default_factory=datetime.now)
@@ -184,7 +191,7 @@ class ChartConfigSchema(BaseModel):
 
     description: str = Field(description="Description of the chart")
 
-    data: Dict[str, Any] = Field(description="Data for the chart")
+    data: List[Dict[str, Any]] = Field(description="Data for the chart")
 
     chartConfig: Dict[str, ChartItem] = Field(
         description="Dictionary of chart items, where keys are item names and values contain label and color"
@@ -264,7 +271,9 @@ class Chat(BaseModel):
 
     id: str = Field(description="Unique identifier for the chat")
     user_id: str = Field(description="ID of the user who owns this chat")
-    dashboard_id: str = Field(description="ID of the dashboard this chat is associated with")
+    dashboard_id: str = Field(
+        description="ID of the dashboard this chat is associated with"
+    )
     title: Optional[str] = Field(default=None, description="Title of the chat")
     conversation: List[Dict[str, Any]] = Field(
         default_factory=list, description="Array of conversation messages"
@@ -313,7 +322,9 @@ class CreateJobInput(BaseModel):
     dashboard_id: Optional[str] = Field(
         default=None, description="Dashboard ID if job is related to a dashboard"
     )
-    job_type: str = Field(description="Type of job (e.g., 'widget_creation', 'data_processing')")
+    job_type: str = Field(
+        description="Type of job (e.g., 'widget_creation', 'data_processing')"
+    )
     status: str = Field(default="pending", description="Initial job status")
     progress: int = Field(default=0, description="Job progress percentage (0-100)")
     metadata: Optional[Dict[str, Any]] = Field(
@@ -326,9 +337,15 @@ class UpdateJobInput(BaseModel):
 
     job_id: str = Field(description="Job identifier")
     status: Optional[str] = Field(default=None, description="Job status")
-    progress: Optional[int] = Field(default=None, description="Job progress percentage (0-100)")
-    error: Optional[str] = Field(default=None, description="Error message if job failed")
-    result: Optional[Dict[str, Any]] = Field(default=None, description="Job result data")
+    progress: Optional[int] = Field(
+        default=None, description="Job progress percentage (0-100)"
+    )
+    error: Optional[str] = Field(
+        default=None, description="Error message if job failed"
+    )
+    result: Optional[Dict[str, Any]] = Field(
+        default=None, description="Job result data"
+    )
     metadata: Optional[Dict[str, Any]] = Field(
         default=None, description="Additional job metadata"
     )
@@ -343,10 +360,16 @@ class Job(BaseModel):
         default=None, description="Dashboard ID if job is related to a dashboard"
     )
     job_type: str = Field(description="Type of job")
-    status: str = Field(description="Current job status (pending, processing, completed, failed)")
+    status: str = Field(
+        description="Current job status (pending, processing, completed, failed)"
+    )
     progress: int = Field(description="Job progress percentage (0-100)")
-    error: Optional[str] = Field(default=None, description="Error message if job failed")
-    result: Optional[Dict[str, Any]] = Field(default=None, description="Job result data")
+    error: Optional[str] = Field(
+        default=None, description="Error message if job failed"
+    )
+    result: Optional[Dict[str, Any]] = Field(
+        default=None, description="Job result data"
+    )
     metadata: Optional[Dict[str, Any]] = Field(
         default=None, description="Additional job metadata"
     )
