@@ -13,7 +13,9 @@
       "Bash(PYTHONPATH=src python -m py_compile src/agent/graph.py)",
       "Bash(PYTHONPATH=src python:*)",
       "WebFetch(domain:langchain-ai.github.io)",
-      "Bash(pip install:*)"
+      "Bash(pip install:*)",
+      "WebFetch(domain:e2b.dev)",
+      "WebFetch(domain:context7.com)"
     ],
     "deny": [],
     "ask": []
