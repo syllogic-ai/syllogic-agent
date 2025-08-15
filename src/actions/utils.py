@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 def take_last(old: Any, new: Any) -> Any:
     """Reducer that takes the last (most recent) value"""
     return new if new is not None else old
-    
+
 
 def merge_lists(old: List[Any], new: Any) -> List[Any]:
     """Reducer that extends lists with new items"""

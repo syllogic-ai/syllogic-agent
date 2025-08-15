@@ -6,178 +6,6 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-# Database Models (matching Drizzle schema)
-
-
-class User(BaseModel):
-    """User model matching the database schema."""
-
-    id: str = Field(description="Clerk user ID")
-    email: str
-    created_at: Optional[datetime] = None
-
-
-class File(BaseModel):
-    """File model matching the database schema."""
-
-    id: str = Field(description="File identifier")
-    user_id: str = Field(description="User who owns the file")
-    dashboard_id: Optional[str] = Field(
-        default=None, description="Associated dashboard ID"
-    )
-    file_type: str = Field(description="'original' | 'cleaned' | 'meta'")
-    original_filename: str = Field(description="User-visible filename")
-    sanitized_filename: Optional[str] = Field(
-        default=None, description="UUID-based filename for storage"
-    )
-    storage_path: str = Field(description="Path in storage")
-    mime_type: Optional[str] = Field(
-        default=None, description="MIME type for proper display"
-    )
-    size: Optional[int] = Field(default=None, description="File size in bytes")
-    status: str = Field(
-        default="ready", description="'processing' | 'ready' | 'failed'"
-    )
-    created_at: Optional[datetime] = None
-
-
-class Dashboard(BaseModel):
-    """Dashboard model matching the database schema."""
-
-    id: str = Field(description="Dashboard identifier")
-    user_id: str = Field(description="User who owns the dashboard")
-    name: str = Field(default="New Dashboard", description="Dashboard name")
-    description: Optional[str] = Field(
-        default=None, description="Dashboard description"
-    )
-    icon: str = Field(default="document-text", description="Dashboard icon")
-    setup_completed: bool = Field(default=False, description="Setup state tracking")
-    is_public: bool = Field(default=False, description="Public sharing")
-    active_theme_id: Optional[str] = Field(default=None, description="Active theme ID")
-    theme_mode: str = Field(default="light", description="'light' | 'dark' | 'system'")
-    width: str = Field(default="full", description="'full' | 'constrained'")
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-
-
-class Widget(BaseModel):
-    """Widget model matching the database schema."""
-
-    id: str = Field(description="Widget identifier")
-    dashboard_id: str = Field(description="Associated dashboard ID")
-    title: str = Field(description="Widget title")
-    type: str = Field(description="'text' | 'chart' | 'kpi' | 'table'")
-    config: Dict[str, Any] = Field(description="Widget configuration")
-    data: Optional[Dict[str, Any]] = Field(default=None, description="Widget data")
-    sql: Optional[str] = Field(default=None, description="SQL query for the dashboard")
-    layout: Optional[Dict[str, Any]] = Field(
-        default=None, description="React Grid Layout position"
-    )
-    order: Optional[int] = Field(default=None, description="Order-based positioning")
-    chat_id: Optional[str] = Field(
-        default=None, description="Chat ID if created from chat"
-    )
-    is_configured: bool = Field(
-        default=False, description="Widget configuration status"
-    )
-    cache_key: Optional[str] = Field(default=None, description="Cache key")
-    last_data_fetch: Optional[datetime] = Field(
-        default=None, description="Last data fetch timestamp"
-    )
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-
-
-class ConversationMessage(BaseModel):
-    """Individual message within a chat conversation."""
-
-    role: str = Field(description="Message role")
-    message: str = Field(description="Message content")
-    timestamp: str = Field(description="Message timestamp")
-    context_widget_ids: Optional[List[str]] = Field(
-        default=None, description="Widgets included as context"
-    )
-    target_widget_type: Optional[str] = Field(
-        default=None, description="'chart' | 'table' | 'kpi'"
-    )
-    target_chart_sub_type: Optional[str] = Field(
-        default=None, description="'line' | 'area' | 'bar' | 'horizontal-bar' | 'pie'"
-    )
-
-
-class Chat(BaseModel):
-    """Chat model matching the database schema."""
-
-    id: str = Field(description="Chat identifier")
-    user_id: str = Field(description="User who owns the chat")
-    dashboard_id: str = Field(description="Associated dashboard ID")
-    title: str = Field(default="Dashboard Chat", description="Chat title")
-    conversation: List[ConversationMessage] = Field(description="Conversation messages")
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-
-
-class Job(BaseModel):
-    """Job model matching the database schema."""
-
-    id: str = Field(description="UUID job ID")
-    user_id: str = Field(description="User ID (stored as text)")
-    dashboard_id: str = Field(description="Dashboard ID (stored as text)")
-    status: str = Field(
-        default="pending",
-        description="'pending' | 'processing' | 'completed' | 'failed'",
-    )
-    progress: int = Field(default=0, description="0-100")
-    error: Optional[str] = Field(default=None, description="Error message")
-    created_at: Optional[datetime] = None
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
-    processing_time_ms: Optional[int] = Field(
-        default=None, description="Processing time in milliseconds"
-    )
-    queue_time_ms: Optional[int] = Field(
-        default=None, description="Queue time in milliseconds"
-    )
-
-
-class LLMUsage(BaseModel):
-    """LLM Usage model matching the database schema."""
-
-    id: str = Field(description="Usage identifier")
-    user_id: Optional[str] = Field(default=None, description="User ID (stored as text)")
-    chat_id: Optional[str] = Field(default=None, description="Chat ID (stored as text)")
-    request_id: Optional[str] = Field(
-        default=None, description="Same as job_id for linking"
-    )
-    dashboard_id: Optional[str] = Field(
-        default=None, description="Dashboard ID for analytics"
-    )
-    model: str = Field(description="Model name")
-    input_tokens: int = Field(description="Input tokens count")
-    output_tokens: int = Field(description="Output tokens count")
-    total_cost: float = Field(description="Total cost")
-    created_at: Optional[datetime] = None
-
-
-# Input/Output Models for API functions
-
-
-class ChatMessageInput(BaseModel):
-    """Input model for appending chat messages."""
-
-    chat_id: str = Field(description="Chat identifier")
-    role: str = Field(description="Message role ('user', 'system', 'assistant')")
-    message: str = Field(description="Message content")
-    context_widget_ids: Optional[List[str]] = Field(
-        default=None, description="Context widget IDs"
-    )
-    target_widget_type: Optional[str] = Field(
-        default=None, description="Target widget type"
-    )
-    target_chart_sub_type: Optional[str] = Field(
-        default=None, description="Chart sub-type"
-    )
-
 
 class CreateWidgetInput(BaseModel):
     """Input model for creating widgets."""
@@ -218,25 +46,6 @@ class UpdateWidgetInput(BaseModel):
         default=None, description="Configuration status"
     )
     cache_key: Optional[str] = Field(default=None, description="Cache key")
-
-
-class CreateJobInput(BaseModel):
-    """Input model for creating jobs."""
-
-    job_id: str = Field(description="Job identifier")
-    user_id: str = Field(description="User ID")
-    dashboard_id: str = Field(description="Dashboard ID")
-    status: str = Field(default="pending", description="Initial status")
-    progress: int = Field(default=0, description="Initial progress")
-
-
-class UpdateJobInput(BaseModel):
-    """Input model for updating job status."""
-
-    job_id: str = Field(description="Job identifier")
-    status: str = Field(description="New status")
-    progress: Optional[int] = Field(default=None, description="Progress percentage")
-    error: Optional[str] = Field(default=None, description="Error message")
 
 
 class BackendPayload(BaseModel):
@@ -282,111 +91,6 @@ class FileSampleData(BaseModel):
     rows: List[List[Any]]
     total_rows_in_file: int
     sample_rows_returned: int
-
-
-class ContextWidget(BaseModel):
-    """Information about existing widgets in context."""
-
-    widget_id: str
-    title: str
-    type: str
-    config: Dict[str, Any]
-    data: Optional[Dict[str, Any]] = None
-    sql: Optional[str] = None
-
-
-class WidgetTask(BaseModel):
-    """A task for creating/updating/deleting a widget."""
-
-    # Task metadata
-    task_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    task_status: Literal["pending", "in_progress", "completed", "failed"] = Field(
-        default="pending"
-    )
-    task_instructions: str
-
-    # User prompt
-    user_prompt: str
-
-    # Widget creation/update/delete
-    operation: Literal["CREATE", "UPDATE", "DELETE"]
-    widget_type: str = Field(description="line, bar, pie, area, radial, kpi, table")
-    widget_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-
-    # File context
-    file_ids: List[str] = Field(default_factory=list)
-    file_sample_data: List[FileSampleData] = Field(default_factory=list)
-    file_schemas: List[FileSchema] = Field(default_factory=list)
-
-    # Widget context
-    title: str
-    description: str
-
-    # Task result
-    data: Optional[Dict[str, Any]] = None  # Data generated by the task
-    widget_metadata: Optional[Dict[str, Any]] = None  # Metadata about the widget
-    data_validated: bool = False
-
-
-class DashboardInfo(BaseModel):
-    """Dashboard context information."""
-
-    dashboard_id: str
-    name: str
-    description: Optional[str] = None
-    file_ids: List[str]
-    existing_widgets: List[Dict[str, Any]] = Field(default_factory=list)
-
-
-class TopLevelState(BaseModel):
-    """Complete state for the chart generation workflow."""
-
-    # Input from frontend
-    user_prompt: str = ""
-    dashboard_id: str = ""
-    context_widget_ids: Optional[List[str]] = None
-    chat_id: str = ""
-    request_id: str = ""
-    user_id: str = ""
-    conversation_history: List[Dict[str, Any]] = Field(default_factory=list)
-
-    # Coordinator outputs
-    file_ids: List[str] = Field(default_factory=list)
-    available_data_schemas: Dict[str, FileSchema] = Field(
-        default_factory=dict, description="file_id: schema mapping"
-    )
-    available_sample_data: Dict[str, FileSampleData] = Field(
-        default_factory=dict, description="file_id: sample mapping"
-    )
-    context_widgets: List[ContextWidget] = Field(default_factory=list)
-    widget_tasks: List[WidgetTask] = Field(default_factory=list)
-    task_completion_status: Dict[str, str] = Field(
-        default_factory=dict, description="task_id: status mapping"
-    )
-    created_widget_ids: List[str] = Field(default_factory=list)
-
-    # Dashboard context
-    dashboard_info: Optional[DashboardInfo] = None
-
-    # Control flow
-    current_step: str = "coordinator"
-    should_continue: bool = True
-    errors: List[str] = Field(default_factory=list)
-    warnings: List[str] = Field(default_factory=list)
-
-    # Timestamps
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
-
-    # Result
-    result: Optional[str] = None
-
-    class Config:
-        arbitrary_types_allowed = True
-        use_enum_values = True
-
-
-# Widget Agent Team Models
 
 
 class SupervisorDecision(BaseModel):
@@ -449,3 +153,208 @@ class WidgetAgentState(BaseModel):
     class Config:
         arbitrary_types_allowed = True
         use_enum_values = True
+
+
+# Chart Config Schema
+
+
+class ChartItem(BaseModel):
+    """Individual item configuration within chartConfig."""
+
+    label: str = Field(description="Display label for the chart item")
+    color: str = Field(
+        description="Color value for the chart item (e.g., 'var(--chart-1)' or hex)"
+    )
+
+
+class XAxisConfig(BaseModel):
+    """Configuration for the chart's X-axis."""
+
+    dataKey: str = Field(description="The data key to use for the X-axis")
+
+
+class ChartConfigSchema(BaseModel):
+    """Complete chart configuration schema."""
+
+    chartType: Literal["line", "bar", "pie", "area", "radial", "kpi", "table"] = Field(
+        description="Type of chart"
+    )
+
+    title: str = Field(description="Title of the chart")
+
+    description: str = Field(description="Description of the chart")
+
+    data: Dict[str, Any] = Field(description="Data for the chart")
+
+    chartConfig: Dict[str, ChartItem] = Field(
+        description="Dictionary of chart items, where keys are item names and values contain label and color"
+    )
+    xAxisConfig: XAxisConfig = Field(description="X-axis configuration")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "data": [
+                    {
+                        "category": "2023",  # example data and schema. actual data will be different.
+                        "revenue": 100000,  # example data and schema. actual data will be different.
+                        "cost": 50000,  # example data and schema. actual data will be different.
+                        "profit": 50000,  # example data and schema. actual data will be different.
+                    },
+                    {
+                        "category": "2024",  # example data and schema. actual data will be different.
+                        "revenue": 150000,  # example data and schema. actual data will be different.
+                        "cost": 75000,  # example data and schema. actual data will be different.
+                        "profit": 75000,  # example data and schema. actual data will be different.
+                    },
+                ],
+                "chartConfig": {
+                    "revenue": {"label": "Revenue", "color": "var(--chart-1)"},
+                    "cost": {"label": "Cost", "color": "var(--chart-2)"},
+                    "profit": {"label": "Profit", "color": "var(--chart-3)"},
+                },
+                "xAxisConfig": {"dataKey": "category"},
+            }
+        }
+
+
+# Chat Models for chat functionality
+
+
+class ConversationMessage(BaseModel):
+    """Individual message within a chat conversation."""
+
+    role: Literal["user", "assistant", "system"] = Field(
+        description="Role of the message sender"
+    )
+    message: str = Field(description="Content of the message")
+    timestamp: str = Field(description="ISO timestamp when message was created")
+    context_widget_ids: Optional[List[str]] = Field(
+        default=None, description="Widget IDs referenced in this message"
+    )
+    target_widget_type: Optional[str] = Field(
+        default=None, description="Target widget type for this message"
+    )
+    target_chart_sub_type: Optional[str] = Field(
+        default=None, description="Target chart subtype for this message"
+    )
+
+
+class ChatMessageInput(BaseModel):
+    """Input model for creating chat messages."""
+
+    chat_id: str = Field(description="ID of the chat to append message to")
+    role: Literal["user", "assistant", "system"] = Field(
+        description="Role of the message sender"
+    )
+    message: str = Field(description="Content of the message")
+    context_widget_ids: Optional[List[str]] = Field(
+        default=None, description="Widget IDs referenced in this message"
+    )
+    target_widget_type: Optional[str] = Field(
+        default=None, description="Target widget type for this message"
+    )
+    target_chart_sub_type: Optional[str] = Field(
+        default=None, description="Target chart subtype for this message"
+    )
+
+
+class Chat(BaseModel):
+    """Chat model representing a conversation in the database."""
+
+    id: str = Field(description="Unique identifier for the chat")
+    user_id: str = Field(description="ID of the user who owns this chat")
+    dashboard_id: str = Field(description="ID of the dashboard this chat is associated with")
+    title: Optional[str] = Field(default=None, description="Title of the chat")
+    conversation: List[Dict[str, Any]] = Field(
+        default_factory=list, description="Array of conversation messages"
+    )
+    created_at: str = Field(description="ISO timestamp when chat was created")
+    updated_at: str = Field(description="ISO timestamp when chat was last updated")
+
+
+class Widget(BaseModel):
+    """Widget model representing a dashboard widget in the database."""
+
+    id: str = Field(description="Unique identifier for the widget")
+    dashboard_id: str = Field(description="Dashboard identifier")
+    title: str = Field(description="Widget title")
+    type: str = Field(description="Widget type ('text', 'chart', 'kpi', 'table')")
+    config: Dict[str, Any] = Field(description="Widget configuration")
+    data: Optional[Dict[str, Any]] = Field(default=None, description="Widget data")
+    sql: Optional[str] = Field(default=None, description="SQL query")
+    layout: Optional[Dict[str, Any]] = Field(
+        default=None, description="React Grid Layout position"
+    )
+    chat_id: Optional[str] = Field(
+        default=None, description="Chat ID if created from chat"
+    )
+    order: Optional[int] = Field(default=None, description="Order for positioning")
+    is_configured: Optional[bool] = Field(
+        default=None, description="Configuration status"
+    )
+    cache_key: Optional[str] = Field(default=None, description="Cache key")
+    created_at: Optional[str] = Field(
+        default=None, description="ISO timestamp when widget was created"
+    )
+    updated_at: Optional[str] = Field(
+        default=None, description="ISO timestamp when widget was last updated"
+    )
+
+
+# Job Models for job management functionality
+
+
+class CreateJobInput(BaseModel):
+    """Input model for creating jobs."""
+
+    job_id: str = Field(description="Unique identifier for the job")
+    user_id: str = Field(description="ID of the user who owns this job")
+    dashboard_id: Optional[str] = Field(
+        default=None, description="Dashboard ID if job is related to a dashboard"
+    )
+    job_type: str = Field(description="Type of job (e.g., 'widget_creation', 'data_processing')")
+    status: str = Field(default="pending", description="Initial job status")
+    progress: int = Field(default=0, description="Job progress percentage (0-100)")
+    metadata: Optional[Dict[str, Any]] = Field(
+        default=None, description="Additional job metadata"
+    )
+
+
+class UpdateJobInput(BaseModel):
+    """Input model for updating jobs."""
+
+    job_id: str = Field(description="Job identifier")
+    status: Optional[str] = Field(default=None, description="Job status")
+    progress: Optional[int] = Field(default=None, description="Job progress percentage (0-100)")
+    error: Optional[str] = Field(default=None, description="Error message if job failed")
+    result: Optional[Dict[str, Any]] = Field(default=None, description="Job result data")
+    metadata: Optional[Dict[str, Any]] = Field(
+        default=None, description="Additional job metadata"
+    )
+
+
+class Job(BaseModel):
+    """Job model representing a background job in the database."""
+
+    id: str = Field(description="Unique identifier for the job")
+    user_id: str = Field(description="ID of the user who owns this job")
+    dashboard_id: Optional[str] = Field(
+        default=None, description="Dashboard ID if job is related to a dashboard"
+    )
+    job_type: str = Field(description="Type of job")
+    status: str = Field(description="Current job status (pending, processing, completed, failed)")
+    progress: int = Field(description="Job progress percentage (0-100)")
+    error: Optional[str] = Field(default=None, description="Error message if job failed")
+    result: Optional[Dict[str, Any]] = Field(default=None, description="Job result data")
+    metadata: Optional[Dict[str, Any]] = Field(
+        default=None, description="Additional job metadata"
+    )
+    created_at: str = Field(description="ISO timestamp when job was created")
+    updated_at: str = Field(description="ISO timestamp when job was last updated")
+    started_at: Optional[str] = Field(
+        default=None, description="ISO timestamp when job processing started"
+    )
+    completed_at: Optional[str] = Field(
+        default=None, description="ISO timestamp when job was completed"
+    )

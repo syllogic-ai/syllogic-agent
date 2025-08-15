@@ -90,12 +90,16 @@ Return your decision with clear reasoning.
         # Max retry constraint
         if state.iteration_count >= 3 and decision.next_node == "data":
             decision.next_node = "end"
-            decision.reasoning = "Maximum retry attempts reached, ending task with failure"
+            decision.reasoning = (
+                "Maximum retry attempts reached, ending task with failure"
+            )
 
         # Missing required fields for data processing
         if decision.next_node == "data" and not state.user_prompt:
             decision.next_node = "end"
-            decision.reasoning = "Missing user prompt required for data processing, ending with failure"
+            decision.reasoning = (
+                "Missing user prompt required for data processing, ending with failure"
+            )
 
         return decision
 
@@ -105,7 +109,7 @@ Return your decision with clear reasoning.
         """
         try:
             # EXPLICIT COMPLETION CHECKS - Handle definitive completion conditions first
-            
+
             # 1. Task explicitly marked as completed
             if state.task_status == "completed":
                 return Command(
@@ -115,8 +119,8 @@ Return your decision with clear reasoning.
                         "updated_at": datetime.now(),
                     },
                 )
-            
-            # 2. Task explicitly marked as failed 
+
+            # 2. Task explicitly marked as failed
             if state.task_status == "failed":
                 return Command(
                     goto=END,
@@ -125,7 +129,7 @@ Return your decision with clear reasoning.
                         "updated_at": datetime.now(),
                     },
                 )
-                
+
             # 3. Max iterations reached - force completion
             if state.iteration_count >= 3:
                 final_status = "completed" if state.data_validated else "failed"
@@ -189,6 +193,7 @@ Return your decision with clear reasoning.
 
 # Create lazy singleton instance for graph usage
 _widget_supervisor_instance = None
+
 
 def widget_supervisor(state: WidgetAgentState) -> Command:
     """Lazy singleton wrapper for WidgetSupervisor."""
