@@ -19,5 +19,13 @@ __all__ = [
     "get_widget_specs",
     "get_widgets_from_dashboard_id",
     "get_widget_from_widget_id",
+    # From utils
+    "take_last",
+    "merge_lists",
+    "convert_data_to_chart_data",
+    "convert_data_to_chart_data_1d",
+    "convert_chart_data_to_chart_config",
+    "convert_value",
+    "remove_null_pairs",
     # Add other exports as needed
 ]

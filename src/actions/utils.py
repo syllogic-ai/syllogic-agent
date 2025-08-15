@@ -1,9 +1,27 @@
 import logging
+from typing import Any, List
 
 import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+
+# State reducers for LangGraph concurrent updates
+def take_last(old: Any, new: Any) -> Any:
+    """Reducer that takes the last (most recent) value"""
+    return new if new is not None else old
+    
+
+def merge_lists(old: List[Any], new: Any) -> List[Any]:
+    """Reducer that extends lists with new items"""
+    if old is None:
+        old = []
+    if new is None:
+        return old
+    if isinstance(new, list):
+        return old + new
+    return old + [new]
 
 
 async def convert_data_to_chart_data_1d(

@@ -957,7 +957,6 @@ If confidence is below 80, be very specific about what's wrong and what needs to
                 "value": str(data)[:100]  # First 100 chars
             }
 
-
 # Create lazy singleton instance
 _worker_nodes_instance = None
 
