@@ -381,3 +381,81 @@ class Job(BaseModel):
     completed_at: Optional[str] = Field(
         default=None, description="ISO timestamp when job was completed"
     )
+
+
+# Top Level Supervisor Models
+
+
+class DelegatedTask(BaseModel):
+    """A task that has been delegated to a specialized agent team."""
+    
+    task_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    task_type: Literal["widget_operation", "data_analysis", "reporting"] = Field(
+        description="Type of task to be handled by specialized agents"
+    )
+    target_agent: Literal["widget_agent_team"] = Field(
+        description="Which agent team should handle this task"
+    )
+    task_instructions: str = Field(description="Detailed instructions for the task")
+    task_status: Literal["pending", "in_progress", "completed", "failed"] = Field(
+        default="pending"
+    )
+    
+    # Task data for initialization
+    widget_agent_state_data: Optional[Dict[str, Any]] = Field(
+        default=None, description="Data needed to initialize WidgetAgentState"
+    )
+    
+    # Task results
+    result: Optional[Dict[str, Any]] = Field(default=None, description="Task result data")
+    error_message: Optional[str] = Field(default=None, description="Error if task failed")
+    
+    # Timestamps
+    created_at: datetime = Field(default_factory=datetime.now)
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+
+
+class TopLevelSupervisorState(BaseModel):
+    """State for the top-level supervisor that orchestrates all agent teams."""
+    
+    # Request information
+    user_prompt: str = Field(description="Original user request")
+    user_id: str = Field(description="ID of the user making the request")
+    dashboard_id: str = Field(description="Dashboard context for the request")
+    chat_id: str = Field(description="Chat ID for conversation continuity")
+    request_id: str = Field(description="Unique identifier for this request")
+    
+    # Available data context
+    available_files: List[str] = Field(default_factory=list, description="List of available file IDs")
+    available_data_summary: Optional[str] = Field(
+        default=None, description="Summary of available data for analysis"
+    )
+    
+    # Task management
+    delegated_tasks: List[DelegatedTask] = Field(
+        default_factory=list, description="Tasks delegated to specialized agents"
+    )
+    current_reasoning: Optional[str] = Field(
+        default=None, description="Current reasoning and analysis"
+    )
+    
+    # Status tracking
+    supervisor_status: Literal["analyzing", "delegating", "monitoring", "completed", "failed"] = Field(
+        default="analyzing"
+    )
+    all_tasks_completed: bool = Field(default=False)
+    
+    # Results
+    final_response: Optional[str] = Field(
+        default=None, description="Final response to the user"
+    )
+    error_messages: List[str] = Field(default_factory=list)
+    
+    # Timestamps
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: Optional[datetime] = None
+    
+    class Config:
+        arbitrary_types_allowed = True
+        use_enum_values = True
