@@ -92,11 +92,11 @@ def get_e2b_api_key() -> str:
 
     try:
         # Get E2B API key from environment
-        # Try E2B_SANDBOX_API_KEY (user's setup)
-        api_key = os.getenv("E2B_SANDBOX_API_KEY")
+        # Try both E2B_SANDBOX_API_KEY (custom) and E2B_API_KEY (standard)
+        api_key = os.getenv("E2B_SANDBOX_API_KEY") or os.getenv("E2B_API_KEY")
 
         if not api_key:
-            raise ValueError("E2B_SANDBOX_API_KEY environment variable is required")
+            raise ValueError("E2B_SANDBOX_API_KEY or E2B_API_KEY environment variable is required")
 
         _e2b_api_key = api_key
         logger.info("E2B API key loaded successfully")

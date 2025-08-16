@@ -14,7 +14,18 @@ import requests
 from supabase import Client
 
 from agent.models import CreateWidgetInput, UpdateWidgetInput, Widget
-from config import get_supabase_client
+# Import config using the robust import utility to avoid circular dependencies
+def _get_supabase_client():
+    """Get Supabase client using robust import."""
+    try:
+        # Try direct import first
+        from config import get_supabase_client
+        return get_supabase_client()
+    except ImportError:
+        # Fallback to robust import from utils
+        from .utils import import_config
+        config_module = import_config()
+        return config_module.get_supabase_client()
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +45,7 @@ def get_data_from_file(file_id: str) -> pd.DataFrame:
         Exception: If file not found or data retrieval fails
     """
     try:
-        supabase = get_supabase_client()
+        supabase = _get_supabase_client()
 
         # Get file information from database
         file_info = (
@@ -105,7 +116,7 @@ def get_files_from_dashboard(dashboard_id: str) -> List[str]:
         Exception: If dashboard not found or query fails
     """
     try:
-        supabase = get_supabase_client()
+        supabase = _get_supabase_client()
 
         # Query the files table directly using dashboard_id foreign key
         response = (
@@ -229,7 +240,7 @@ def create_widget(widget_input: CreateWidgetInput) -> Widget:
         Exception: If widget creation fails
     """
     try:
-        supabase = get_supabase_client()
+        supabase = _get_supabase_client()
         widget_id = str(uuid.uuid4())
 
         # Prepare widget data from input model
@@ -286,7 +297,7 @@ def update_widget(update_input: UpdateWidgetInput) -> Widget:
         Exception: If widget update fails
     """
     try:
-        supabase = get_supabase_client()
+        supabase = _get_supabase_client()
 
         # Prepare update data
         update_data = {"updated_at": datetime.now().isoformat()}
@@ -349,7 +360,7 @@ def delete_widget(widget_id: str) -> bool:
         Exception: If widget deletion fails
     """
     try:
-        supabase = get_supabase_client()
+        supabase = _get_supabase_client()
 
         # Delete widget from database
         result = supabase.table("widgets").delete().eq("id", widget_id).execute()
@@ -380,7 +391,7 @@ async def get_widget_specs(widget_id: str) -> Widget:
         Exception: If widget not found or retrieval fails
     """
     try:
-        supabase = get_supabase_client()
+        supabase = _get_supabase_client()
 
         # Get complete widget data from database
         result = (
@@ -416,7 +427,7 @@ def get_widgets_from_dashboard_id(dashboard_id: str) -> List[Widget]:
         Exception: If retrieval fails
     """
     try:
-        supabase = get_supabase_client()
+        supabase = _get_supabase_client()
 
         result = (
             supabase.table("widgets")
@@ -446,7 +457,7 @@ def get_widget_from_widget_id(widget_id: str) -> Optional[Widget]:
         Exception: If retrieval fails
     """
     try:
-        supabase = get_supabase_client()
+        supabase = _get_supabase_client()
 
         result = (
             supabase.table("widgets").select("*").eq("id", widget_id).single().execute()

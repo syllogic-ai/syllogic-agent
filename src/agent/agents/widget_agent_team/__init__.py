@@ -22,11 +22,11 @@ Usage:
 """
 
 from .main import WidgetAgentRunner, create_custom_widget, run_all_examples
-from .tools import CodeGenerator, DataProcessor
 from .widget_supervisor import WidgetSupervisor, widget_supervisor
 from .worker_nodes import (
     data_node,
     validate_data_node,
+    db_operations_node,
 )
 
 __all__ = [
@@ -40,7 +40,5 @@ __all__ = [
     # Worker nodes
     "data_node",
     "validate_data_node",
-    # Tools
-    "DataProcessor",
-    "CodeGenerator",
+    "db_operations_node",
 ]
