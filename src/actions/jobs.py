@@ -31,6 +31,7 @@ def create_job(supabase: Client, job_input: CreateJobInput) -> Job:
             "id": job_input.job_id,
             "user_id": job_input.user_id,
             "dashboard_id": job_input.dashboard_id,
+            "job_type": job_input.job_type,
             "status": job_input.status,
             "progress": job_input.progress,
             "created_at": datetime.now().isoformat(),
@@ -126,7 +127,11 @@ def update_job_status(supabase: Client, update_input: UpdateJobInput) -> Job:
                 id=update_input.job_id,
                 user_id="",
                 dashboard_id="",
+                job_type="unknown",
                 status=update_input.status,
+                progress=update_input.progress or 0,
+                created_at=datetime.now().isoformat(),
+                updated_at=datetime.now().isoformat(),
             )
 
     except Exception as e:

@@ -32,7 +32,7 @@ class TestGetDataFromFile:
     """Test cases for get_data_from_file function."""
 
     @patch("requests.get")
-    @patch("actions.dashboard.get_supabase_client")
+    @patch("actions.dashboard._get_supabase_client")
     @patch.dict(os.environ, {"SUPABASE_URL": "https://test.supabase.co"})
     def test_get_data_csv_success(
         self,
@@ -64,7 +64,7 @@ class TestGetDataFromFile:
         assert list(result.columns) == ["date", "value", "category", "percentage"]
         assert result.iloc[0]["value"] == 100
 
-    @patch("actions.dashboard.get_supabase_client")
+    @patch("actions.dashboard._get_supabase_client")
     def test_get_data_file_not_found(self, mock_get_supabase_client):
         """Test error when file is not found in database."""
         mock_supabase = Mock()
@@ -77,7 +77,7 @@ class TestGetDataFromFile:
         with pytest.raises(Exception, match="File file-123 not found"):
             get_data_from_file("file-123")
 
-    @patch("actions.dashboard.get_supabase_client")
+    @patch("actions.dashboard._get_supabase_client")
     @patch.dict(os.environ, {}, clear=True)
     def test_get_data_missing_env_vars(
         self, mock_get_supabase_client, sample_file_data
@@ -97,7 +97,7 @@ class TestGetDataFromFile:
             get_data_from_file("file-123")
 
     @patch("requests.get")
-    @patch("actions.dashboard.get_supabase_client")
+    @patch("actions.dashboard._get_supabase_client")
     @patch.dict(os.environ, {"SUPABASE_URL": "https://test.supabase.co"})
     def test_get_data_http_error(
         self, mock_get_supabase_client, mock_requests, sample_file_data
@@ -204,7 +204,7 @@ class TestCreateWidget:
     """Test cases for create_widget function."""
 
     @patch("uuid.uuid4")
-    @patch("actions.dashboard.get_supabase_client")
+    @patch("actions.dashboard._get_supabase_client")
     def test_create_widget_success(
         self, mock_get_supabase_client, mock_uuid, sample_widget_data
     ):
@@ -235,7 +235,7 @@ class TestCreateWidget:
         assert insert_call["dashboard_id"] == "dashboard-789"
         assert insert_call["config"] == {"chart_type": "bar"}
 
-    @patch("actions.dashboard.get_supabase_client")
+    @patch("actions.dashboard._get_supabase_client")
     def test_create_widget_with_optional_fields(
         self, mock_get_supabase_client, sample_widget_data
     ):
@@ -267,7 +267,7 @@ class TestCreateWidget:
         assert insert_call["chat_id"] == "chat-123"
         assert insert_call["order"] == 1
 
-    @patch("actions.dashboard.get_supabase_client")
+    @patch("actions.dashboard._get_supabase_client")
     def test_create_widget_insert_fails(self, mock_get_supabase_client):
         """Test error when widget insert fails."""
         mock_supabase = Mock()
@@ -287,7 +287,7 @@ class TestCreateWidget:
 class TestUpdateWidget:
     """Test cases for update_widget function."""
 
-    @patch("actions.dashboard.get_supabase_client")
+    @patch("actions.dashboard._get_supabase_client")
     def test_update_widget_success(self, mock_get_supabase_client, sample_widget_data):
         """Test successfully updating a widget."""
         mock_supabase = Mock()
@@ -311,7 +311,7 @@ class TestUpdateWidget:
         assert update_call["config"] == {"new_config": True}
         assert "updated_at" in update_call
 
-    @patch("actions.dashboard.get_supabase_client")
+    @patch("actions.dashboard._get_supabase_client")
     def test_update_widget_not_found(self, mock_get_supabase_client):
         """Test updating widget that doesn't exist."""
         mock_supabase = Mock()
@@ -331,7 +331,7 @@ class TestUpdateWidget:
 class TestDeleteWidget:
     """Test cases for delete_widget function."""
 
-    @patch("actions.dashboard.get_supabase_client")
+    @patch("actions.dashboard._get_supabase_client")
     def test_delete_widget_success(self, mock_get_supabase_client):
         """Test successfully deleting a widget."""
         mock_supabase = Mock()
@@ -345,7 +345,7 @@ class TestDeleteWidget:
 
         assert result is True
 
-    @patch("actions.dashboard.get_supabase_client")
+    @patch("actions.dashboard._get_supabase_client")
     def test_delete_widget_not_found(self, mock_get_supabase_client):
         """Test deleting widget that doesn't exist."""
         mock_supabase = Mock()
@@ -363,7 +363,7 @@ class TestDeleteWidget:
 class TestGetWidgetSpecs:
     """Test cases for get_widget_specs function."""
 
-    @patch("actions.dashboard.get_supabase_client")
+    @patch("actions.dashboard._get_supabase_client")
     @pytest.mark.asyncio
     async def test_get_widget_specs_success(
         self, mock_get_supabase_client, sample_widget_data
@@ -385,7 +385,7 @@ class TestGetWidgetSpecs:
         # Verify database call
         mock_supabase.table.assert_called_with("widgets")
 
-    @patch("actions.dashboard.get_supabase_client")
+    @patch("actions.dashboard._get_supabase_client")
     @pytest.mark.asyncio
     async def test_get_widget_specs_not_found(self, mock_get_supabase_client):
         """Test error when widget is not found."""
@@ -403,7 +403,7 @@ class TestGetWidgetSpecs:
 class TestGetWidgetsFromDashboardId:
     """Test cases for get_widgets_from_dashboard_id function."""
 
-    @patch("actions.dashboard.get_supabase_client")
+    @patch("actions.dashboard._get_supabase_client")
     def test_get_widgets_success(self, mock_get_supabase_client, sample_widget_data):
         """Test successfully getting widgets from dashboard ID."""
         mock_supabase = Mock()
@@ -428,7 +428,7 @@ class TestGetWidgetsFromDashboardId:
             "dashboard_id", "dashboard-123"
         )
 
-    @patch("actions.dashboard.get_supabase_client")
+    @patch("actions.dashboard._get_supabase_client")
     def test_get_widgets_empty_result(self, mock_get_supabase_client):
         """Test getting widgets when none exist for dashboard."""
         mock_supabase = Mock()
@@ -447,7 +447,7 @@ class TestGetWidgetsFromDashboardId:
 class TestGetWidgetFromWidgetId:
     """Test cases for get_widget_from_widget_id function."""
 
-    @patch("actions.dashboard.get_supabase_client")
+    @patch("actions.dashboard._get_supabase_client")
     def test_get_widget_success(self, mock_get_supabase_client, sample_widget_data):
         """Test successfully getting widget by widget ID."""
         mock_supabase = Mock()
@@ -470,7 +470,7 @@ class TestGetWidgetFromWidgetId:
         mock_supabase.table().select.assert_called_with("*")
         mock_supabase.table().select().eq.assert_called_with("id", "widget-123")
 
-    @patch("actions.dashboard.get_supabase_client")
+    @patch("actions.dashboard._get_supabase_client")
     def test_get_widget_not_found(self, mock_get_supabase_client):
         """Test getting widget that doesn't exist."""
         mock_supabase = Mock()

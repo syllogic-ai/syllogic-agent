@@ -41,14 +41,17 @@ class TestCreateJob:
                 "id": "job-123",
                 "user_id": "user-456",
                 "dashboard_id": "dashboard-789",
+                "job_type": "widget_creation",
                 "status": "pending",
                 "progress": 0,
+                "created_at": "2024-01-01T00:00:00",
+                "updated_at": "2024-01-01T00:00:00",
             }
         ]
         mock_supabase.table().insert().execute.return_value = mock_result
 
         job_input = CreateJobInput(
-            job_id="job-123", user_id="user-456", dashboard_id="dashboard-789"
+            job_id="job-123", user_id="user-456", dashboard_id="dashboard-789", job_type="widget_creation"
         )
         result = create_job(mock_supabase, job_input)
 
@@ -77,6 +80,7 @@ class TestCreateJob:
             job_id="job-123",
             user_id="user-456",
             dashboard_id="dashboard-789",
+            job_type="widget_creation",
             status="processing",
             progress=25,
         )
@@ -93,7 +97,7 @@ class TestCreateJob:
         mock_supabase.table().insert().execute.return_value = mock_result
 
         job_input = CreateJobInput(
-            job_id="job-123", user_id="user-456", dashboard_id="dashboard-789"
+            job_id="job-123", user_id="user-456", dashboard_id="dashboard-789", job_type="widget_creation"
         )
         with pytest.raises(Exception, match="Failed to create job job-123"):
             create_job(mock_supabase, job_input)
@@ -103,7 +107,7 @@ class TestCreateJob:
         mock_supabase.table().insert().execute.side_effect = Exception("DB Error")
 
         job_input = CreateJobInput(
-            job_id="job-123", user_id="user-456", dashboard_id="dashboard-789"
+            job_id="job-123", user_id="user-456", dashboard_id="dashboard-789", job_type="widget_creation"
         )
         with pytest.raises(Exception, match="DB Error"):
             create_job(mock_supabase, job_input)

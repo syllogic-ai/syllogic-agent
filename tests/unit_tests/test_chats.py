@@ -68,7 +68,7 @@ class TestAppendChatMessage:
         assert isinstance(result, Chat)
         assert result.id == "chat-123"
         assert len(result.conversation) == 3
-        assert result.conversation[-1].message == "New message"
+        assert result.conversation[-1]["message"] == "New message"
 
     def test_append_message_with_kwargs(self, mock_supabase, sample_chat_data):
         """Test appending a message with additional properties."""
