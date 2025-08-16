@@ -32,8 +32,14 @@ class WidgetSupervisor:
             for msg in recent_messages:
                 # Check if it's a tool message (from node executions)
                 if hasattr(msg, 'type') and msg.type == 'tool':
+                    tool_call_id = getattr(msg, 'tool_call_id', 'unknown')
+                    
+                    # Determine source node from tool_call_id patterns
+                    source_node = self._identify_source_node(tool_call_id)
+                    
                     handoff_messages.append({
-                        "tool_call_id": getattr(msg, 'tool_call_id', 'unknown'),
+                        "tool_call_id": tool_call_id,
+                        "source_node": source_node,
                         "content": msg.content[:200] + "..." if len(str(msg.content)) > 200 else str(msg.content),
                         "message_type": "tool"
                     })
@@ -41,6 +47,7 @@ class WidgetSupervisor:
                 elif hasattr(msg, 'type'):
                     handoff_messages.append({
                         "tool_call_id": getattr(msg, 'tool_call_id', 'none'),
+                        "source_node": "unknown",
                         "content": str(msg.content)[:200] + "..." if len(str(msg.content)) > 200 else str(msg.content),
                         "message_type": msg.type
                     })
@@ -66,6 +73,7 @@ class WidgetSupervisor:
                 "db_delete_completed": state.widget_deletion_completed,
             },
             "handoff_messages": handoff_messages,
+            "previous_node_info": self._get_previous_node_info(handoff_messages),
             "error_context": {
                 "recent_errors": state.error_messages[-3:] if state.error_messages else [],
                 "total_error_count": len(state.error_messages),
@@ -88,6 +96,66 @@ class WidgetSupervisor:
             analysis["code_execution_result"] = f"Error: {state.code_execution_result['error'][:200]}..."
         
         return analysis
+
+    def _identify_source_node(self, tool_call_id: str) -> str:
+        """
+        Identify the source node from tool_call_id patterns.
+        Each node uses specific tool call ID patterns.
+        """
+        if not tool_call_id or tool_call_id == 'unknown':
+            return "unknown"
+            
+        # Database operations node patterns
+        if any(pattern in tool_call_id for pattern in ['db_create_complete', 'db_update_complete', 'db_delete_complete']):
+            return "db_operations_node"
+            
+        # Validation node patterns
+        if any(pattern in tool_call_id for pattern in ['validation_complete', 'validation_failed']):
+            return "validate_data"
+            
+        # Data processing node patterns (from worker_nodes.py tools)
+        if any(pattern in tool_call_id for pattern in ['fetch_data', 'generate_python_code', 'e2b_sandbox']):
+            return "data"
+            
+        # Check for other common patterns
+        if 'fetch' in tool_call_id or 'data' in tool_call_id:
+            return "data"
+        elif 'validate' in tool_call_id or 'validation' in tool_call_id:
+            return "validate_data"
+        elif 'db' in tool_call_id or 'database' in tool_call_id or 'create' in tool_call_id or 'update' in tool_call_id or 'delete' in tool_call_id:
+            return "db_operations_node"
+            
+        return "unknown"
+
+    def _get_previous_node_info(self, handoff_messages: list) -> Dict[str, str]:
+        """
+        Determine the most recent previous node and its outcome from handoff messages.
+        """
+        if not handoff_messages:
+            return {"previous_node": "none", "outcome": "no_previous_execution"}
+            
+        # Get the most recent tool message (last executed node)
+        recent_tool_messages = [msg for msg in handoff_messages if msg.get("message_type") == "tool"]
+        if not recent_tool_messages:
+            return {"previous_node": "none", "outcome": "no_tool_messages"}
+            
+        last_message = recent_tool_messages[-1]
+        previous_node = last_message.get("source_node", "unknown")
+        
+        # Determine outcome from message content
+        content = last_message.get("content", "").lower()
+        if "complete" in content or "successfully" in content:
+            outcome = "success"
+        elif "error" in content or "failed" in content:
+            outcome = "error"
+        else:
+            outcome = "unknown"
+            
+        return {
+            "previous_node": previous_node,
+            "outcome": outcome,
+            "last_message_summary": last_message.get("content", "")[:100] + "..." if len(last_message.get("content", "")) > 100 else last_message.get("content", "")
+        }
 
     def create_routing_prompt(self, state_analysis: Dict[str, Any]) -> str:
         """Create comprehensive routing prompt for LLM supervisor."""
@@ -126,8 +194,16 @@ Your job is to analyze the current state and user request to determine the next 
 
 - What the task instructions are (from task_instructions). You need to understand the instructions very well first and then make the best decision.
 - What work has been completed (from task_progress and handoff_messages) 
+- Which node just executed and what was the outcome (from previous_node_info)
 - What errors occurred and need addressing (from error_context)
-- A logical flow would be: data processing → validation → database operations → completion. However, you need to judge the situation and make the best decision. For example, if the widget_operation is DELETE, you should not go to the database operations node. Therefore, everytime, you need to think the most appropriate logical flow and next step..
+- A logical flow would be: data processing → validation → database operations → completion. However, you need to judge the situation and make the best decision. For example, if the operation is DELETE, you should go directly to the database operations node without data processing or validation. Therefore, everytime, you need to think the most appropriate logical flow and next step based on the operation type.
+
+PREVIOUS NODE CONTEXT:
+Pay special attention to the "previous_node_info" which tells you:
+- Which node just executed (previous_node)
+- Whether it succeeded or failed (outcome)
+- A summary of what happened (last_message_summary)
+This helps you understand the immediate context for your routing decision.
 
 IMPORTANT GUIDELINES:
 - Base decisions on the user's intent and current progress, not hardcoded rules
@@ -138,9 +214,10 @@ IMPORTANT GUIDELINES:
 - End the workflow only when the task is complete or clearly unrecoverable
 
 COMPLETION SIGNALS - When to choose "end":
-- If task_progress shows db_create_completed=true, db_update_completed=true, or db_delete_completed=true
-- if you get a successfull message from the database operations node, you should end the workflow.
-- Database operation completion means the ENTIRE TASK IS FINISHED.
+- If task_progress shows db_create_completed=true, db_update_completed=true, or db_delete_completed=true, the workflow MUST end immediately
+- If you get a successful message from the database operations node, you should end the workflow
+- Database operation completion means the ENTIRE TASK IS FINISHED - no further processing needed
+- CRITICAL: If any db_*_completed flag is true, you MUST route to "end" regardless of other state
 
 CURRENT STATE ANALYSIS:
 {json.dumps(state_analysis, indent=2)}
@@ -153,7 +230,17 @@ Analyze the situation and make an intelligent routing decision with clear reason
     ) -> SupervisorDecision:
         """Apply minimal safety constraints to LLM decisions."""
         
-        # Only apply critical safety constraints, let LLM handle logic
+        # Critical: Force end if any database operation is completed
+        if (state.widget_creation_completed or 
+            state.widget_update_completed or 
+            state.widget_deletion_completed):
+            decision.next_node = "end"
+            decision.reasoning = (
+                f"Business rule override: Database operation completed "
+                f"(create={state.widget_creation_completed}, update={state.widget_update_completed}, "
+                f"delete={state.widget_deletion_completed}). Workflow must end."
+            )
+            return decision
         
         # Safety: prevent infinite loops with absolute maximum
         if state.iteration_count >= 5 and decision.next_node in ["data", "validate_data"]:
@@ -170,22 +257,46 @@ Analyze the situation and make an intelligent routing decision with clear reason
         Main supervisor function that uses LLM to make all routing decisions based on state and user intent.
         """
         try:
-            # Comprehensive state analysis
-            state_analysis = self.analyze_state(state)
+            # Check for immediate completion before expensive LLM calls
+            if (state.widget_creation_completed or 
+                state.widget_update_completed or 
+                state.widget_deletion_completed):
+                # Database operation completed - create end decision directly
+                decision = SupervisorDecision(
+                    next_node="end",
+                    reasoning=(
+                        f"Database operation completed successfully "
+                        f"(create={state.widget_creation_completed}, update={state.widget_update_completed}, "
+                        f"delete={state.widget_deletion_completed}). Task is finished."
+                    )
+                )
+            else:
+                # Comprehensive state analysis
+                state_analysis = self.analyze_state(state)
 
-            # Create detailed prompt for LLM supervisor
-            routing_prompt = self.create_routing_prompt(state_analysis)
+                # Create detailed prompt for LLM supervisor
+                routing_prompt = self.create_routing_prompt(state_analysis)
 
-            # Get structured decision from LLM
-            decision = self.llm_with_structure.invoke(routing_prompt)
+                # Get structured decision from LLM
+                decision = self.llm_with_structure.invoke(routing_prompt)
 
-            # Apply minimal safety constraints only
-            decision = self.apply_business_rules(decision, state)
+                # Apply minimal safety constraints only
+                decision = self.apply_business_rules(decision, state)
 
             # Handle end condition
             if decision.next_node == "end":
-                # Let the LLM determine final status based on what was accomplished
-                final_status = "completed" if state.data_validated else "failed"
+                # Determine final status based on what was accomplished
+                if (state.widget_creation_completed or 
+                    state.widget_update_completed or 
+                    state.widget_deletion_completed):
+                    final_status = "completed"
+                elif state.data_validated:
+                    final_status = "completed"
+                elif len(state.error_messages) > 0:
+                    final_status = "failed"
+                else:
+                    final_status = "failed"  # Default fallback
+                
                 return Command(
                     goto=END,
                     update={

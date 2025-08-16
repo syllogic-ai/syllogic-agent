@@ -1457,8 +1457,12 @@ Remember: You're validating the APPROACH and QUALITY, not the completeness!
             # Extract operation type
             operation = state.operation
             
-            # Extract title from code_execution_result
-            title = state.code_execution_result.get("title", state.title)
+            # Extract title - for DELETE operations, use state.title directly
+            if operation == "DELETE":
+                title = state.title
+            else:
+                # For CREATE/UPDATE, try to get title from code_execution_result if available
+                title = state.code_execution_result.get("title", state.title) if state.code_execution_result else state.title
             
             # Use widget_type from state
             widget_type = state.widget_type
@@ -1477,10 +1481,10 @@ Remember: You're validating the APPROACH and QUALITY, not the completeness!
                     dashboard_id=dashboard_id,
                     title=title,
                     widget_type=widget_type,
-                    config=state.code_execution_result,  # Pass full code_execution_result as config
+                    config=state.code_execution_result or {},  # Pass full code_execution_result as config or empty dict
                     chat_id=state.chat_id,
                     description=state.description,
-                    data={"data": state.code_execution_result.get("data", [])},  # Wrap data array in dictionary
+                    data={"data": state.code_execution_result.get("data", []) if state.code_execution_result else []},  # Wrap data array in dictionary
                 )
                 
                 # Create widget in database
@@ -1508,10 +1512,10 @@ Remember: You're validating the APPROACH and QUALITY, not the completeness!
                     widget_id=state.widget_id,
                     title=title,
                     widget_type=widget_type,
-                    config=state.code_execution_result,  # Pass full code_execution_result as config
+                    config=state.code_execution_result or {},  # Pass full code_execution_result as config or empty dict
                     chat_id=state.chat_id,
                     description=state.description,
-                    data={"data": state.code_execution_result.get("data", [])},  # Wrap data array in dictionary
+                    data={"data": state.code_execution_result.get("data", []) if state.code_execution_result else []},  # Wrap data array in dictionary
                 )
                 
                 # Update widget in database
