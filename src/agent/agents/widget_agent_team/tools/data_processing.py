@@ -14,6 +14,7 @@ try:
         get_schema_from_file,
     )
     from actions.utils import convert_data_to_chart_data, convert_value
+
     HAS_ACTIONS = True
 except ImportError:
     # Fallback for when actions module is not available
@@ -28,7 +29,7 @@ class DataProcessor:
         """Fetch complete data for a file."""
         if not HAS_ACTIONS:
             raise Exception("Actions module not available - cannot fetch file data")
-        
+
         try:
             data = get_data_from_file(file_id)
             schema = get_schema_from_file(file_id)

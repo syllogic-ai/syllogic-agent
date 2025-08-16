@@ -35,7 +35,7 @@ def get_data_from_file(file_id: str) -> pd.DataFrame:
     """
     try:
         supabase = get_supabase_client()
-        
+
         # Get file information from database
         file_info = (
             supabase.table("files")
@@ -106,7 +106,7 @@ def get_files_from_dashboard(dashboard_id: str) -> List[str]:
     """
     try:
         supabase = get_supabase_client()
-        
+
         # Query the files table directly using dashboard_id foreign key
         response = (
             supabase.table("files")
@@ -173,9 +173,7 @@ def get_schema_from_file(file_id: str) -> Dict[str, Any]:
         raise
 
 
-def get_sample_from_file(
-    file_id: str, num_rows: int = 3
-) -> Dict[str, Any]:
+def get_sample_from_file(file_id: str, num_rows: int = 3) -> Dict[str, Any]:
     """Get sample data from a file (header + specified number of rows).
 
     Args:
@@ -289,7 +287,7 @@ def update_widget(update_input: UpdateWidgetInput) -> Widget:
     """
     try:
         supabase = get_supabase_client()
-        
+
         # Prepare update data
         update_data = {"updated_at": datetime.now().isoformat()}
 
@@ -352,7 +350,7 @@ def delete_widget(widget_id: str) -> bool:
     """
     try:
         supabase = get_supabase_client()
-        
+
         # Delete widget from database
         result = supabase.table("widgets").delete().eq("id", widget_id).execute()
 
@@ -383,7 +381,7 @@ async def get_widget_specs(widget_id: str) -> Widget:
     """
     try:
         supabase = get_supabase_client()
-        
+
         # Get complete widget data from database
         result = (
             supabase.table("widgets").select("*").eq("id", widget_id).single().execute()
@@ -419,7 +417,7 @@ def get_widgets_from_dashboard_id(dashboard_id: str) -> List[Widget]:
     """
     try:
         supabase = get_supabase_client()
-        
+
         result = (
             supabase.table("widgets")
             .select("*")
@@ -449,7 +447,7 @@ def get_widget_from_widget_id(widget_id: str) -> Optional[Widget]:
     """
     try:
         supabase = get_supabase_client()
-        
+
         result = (
             supabase.table("widgets").select("*").eq("id", widget_id).single().execute()
         )

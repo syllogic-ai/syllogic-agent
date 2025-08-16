@@ -1,59 +1,258 @@
 """Worker nodes for widget data processing pipeline using create_react_agent."""
 
 import json
+import os
+
+# Import e2b sandbox creation function
+import sys
 from datetime import datetime
 from typing import Annotated, Any, Dict, List
 
 from langchain.chat_models import init_chat_model
-from langchain_core.tools import tool, InjectedToolCallId
 from langchain_core.messages import ToolMessage
-from langgraph.prebuilt import InjectedState
-from langgraph.prebuilt import create_react_agent
+from langchain_core.tools import InjectedToolCallId, tool
+from langgraph.prebuilt import InjectedState, create_react_agent
 from langgraph.types import Command
-
-from agent.models import WidgetAgentState, FileSchema, ColumnInfo, FileSampleData
 from pydantic import BaseModel, Field
 
-# Import e2b sandbox creation function  
-import sys
-import os
+from agent.models import (
+    ChartConfigSchema,
+    ColumnInfo,
+    FileSampleData,
+    FileSchema,
+    WidgetAgentState,
+)
+
 # Add src directory to Python path for config import
 current_dir = os.path.dirname(os.path.abspath(__file__))
-src_dir = os.path.join(current_dir, '..', '..', '..')
+src_dir = os.path.join(current_dir, "..", "..", "..")
 if src_dir not in sys.path:
     sys.path.insert(0, src_dir)
-from config import create_e2b_sandbox
-from langgraph.types import Command
-from langgraph.prebuilt.chat_agent_executor import AgentState
-from langgraph.graph.message import add_messages
-from typing import Annotated, Optional, Sequence, TypedDict, Literal
+from typing import Annotated, Literal, Optional, Sequence, TypedDict
+
 from langchain_core.messages import BaseMessage
+from langgraph.graph.message import add_messages
+from langgraph.prebuilt.chat_agent_executor import AgentState
+from langgraph.types import Command
+
+from config import create_e2b_sandbox
 
 # E2B sandbox will be created fresh for each execution to avoid state contamination
 
 # No global variables - use Command objects for immediate state updates
 
 
+def _analyze_schema_validation_error(result_data, validation_error):
+    """
+    Analyze schema validation errors and provide detailed feedback about what's wrong.
+
+    Args:
+        result_data: The data that failed validation
+        validation_error: The Pydantic validation error
+
+    Returns:
+        str: Detailed error message explaining what's wrong
+    """
+    try:
+        from pydantic import ValidationError
+
+        error_details = []
+
+        # Check if it's a Pydantic ValidationError
+        if isinstance(validation_error, ValidationError):
+            for error in validation_error.errors():
+                loc = (
+                    " -> ".join(str(x) for x in error["loc"])
+                    if error["loc"]
+                    else "root"
+                )
+                msg = error["msg"]
+                error_type = error["type"]
+
+                if error_type == "missing":
+                    error_details.append(f"Missing required field: '{loc}'")
+                elif error_type == "type_error":
+                    error_details.append(f"Wrong type for field '{loc}': {msg}")
+                elif error_type == "literal_error":
+                    error_details.append(f"Invalid value for field '{loc}': {msg}")
+                elif error_type == "value_error":
+                    error_details.append(f"Invalid value for field '{loc}': {msg}")
+                else:
+                    error_details.append(
+                        f"Error in field '{loc}': {msg} (type: {error_type})"
+                    )
+        else:
+            error_details.append(f"Validation error: {str(validation_error)}")
+
+        # Additional analysis of the result structure
+        if isinstance(result_data, dict):
+            schema_fields = {
+                "chartType": "Must be one of: line, bar, pie, area, radial, kpi, table",
+                "title": "Must be a string describing the chart",
+                "description": "Must be a string explaining what the chart shows",
+                "data": "Must be an array of objects containing the actual data points",
+                "chartConfig": "Must be a dictionary with data field names as keys",
+                "xAxisConfig": "Must be an object with 'dataKey' field",
+            }
+
+            missing_fields = []
+            wrong_types = []
+
+            for field, description in schema_fields.items():
+                if field not in result_data:
+                    missing_fields.append(f"'{field}': {description}")
+                elif field == "data" and not isinstance(result_data[field], list):
+                    wrong_types.append(
+                        f"'{field}': Expected array, got {type(result_data[field]).__name__}"
+                    )
+                elif field in ["chartConfig", "xAxisConfig"] and not isinstance(
+                    result_data[field], dict
+                ):
+                    wrong_types.append(
+                        f"'{field}': Expected object, got {type(result_data[field]).__name__}"
+                    )
+                elif field in ["title", "description", "chartType"] and not isinstance(
+                    result_data[field], str
+                ):
+                    wrong_types.append(
+                        f"'{field}': Expected string, got {type(result_data[field]).__name__}"
+                    )
+
+            if missing_fields:
+                error_details.extend([f"Missing: {field}" for field in missing_fields])
+            if wrong_types:
+                error_details.extend([f"Type error: {field}" for field in wrong_types])
+
+        # Combine all error details
+        if error_details:
+            return "Validation errors: " + "; ".join(error_details)
+        else:
+            return f"Schema validation failed: {str(validation_error)}"
+
+    except Exception as e:
+        return f"Error analyzing validation failure: {str(e)}. Original error: {str(validation_error)}"
+
+
+def get_chart_config_schema_string():
+    """
+    Programmatically extract the ChartConfigSchema as a formatted string for code generation prompts.
+
+    Returns:
+        str: A formatted string representation of the ChartConfigSchema that can be used in prompts.
+    """
+    try:
+        # Get the JSON schema for ChartConfigSchema
+        schema = ChartConfigSchema.model_json_schema()
+
+        # Extract properties and their descriptions
+        properties = schema.get("properties", {})
+
+        # Build a formatted string representation
+        schema_lines = []
+        schema_lines.append("ChartConfigSchema Structure:")
+        schema_lines.append("```json")
+        schema_lines.append("{")
+
+        # Add each property with its type and description
+        for prop_name, prop_info in properties.items():
+            prop_type = prop_info.get(
+                "type", prop_info.get("anyOf", [{}])[0].get("type", "unknown")
+            )
+            description = prop_info.get("description", "No description")
+
+            # Handle special cases for complex types
+            if prop_name == "chartType":
+                enum_values = prop_info.get("enum", [])
+                schema_lines.append(
+                    f'  "{prop_name}": "{" | ".join(enum_values)}" // {description}'
+                )
+            elif prop_name == "chartConfig":
+                schema_lines.append(f'  "{prop_name}": {{')
+                schema_lines.append(f'    "<item_name>": {{')
+                schema_lines.append(
+                    f'      "label": "string", // Display label for the chart item'
+                )
+                schema_lines.append(
+                    f'      "color": "string"  // Color value (e.g., "var(--chart-1)" or hex)'
+                )
+                schema_lines.append(f"    }}")
+                schema_lines.append(f"  }}, // {description}")
+            elif prop_name == "xAxisConfig":
+                schema_lines.append(f'  "{prop_name}": {{')
+                schema_lines.append(
+                    f'    "dataKey": "string" // The data key to use for the X-axis'
+                )
+                schema_lines.append(f"  }}, // {description}")
+            elif prop_name == "data":
+                schema_lines.append(f'  "{prop_name}": [ // {description}')
+                schema_lines.append(
+                    f'    {{ "key": "value", ... }}, // Array of data objects'
+                )
+                schema_lines.append(f"    ...")
+                schema_lines.append(f"  ],")
+            else:
+                schema_lines.append(f'  "{prop_name}": "{prop_type}" // {description}')
+
+        schema_lines.append("}")
+        schema_lines.append("```")
+
+        # Add the example from the model's schema
+        example = schema.get("example")
+        if example and isinstance(example, dict):
+            schema_lines.append("\nExample:")
+            schema_lines.append("```json")
+            schema_lines.append(json.dumps(example, indent=2))
+            schema_lines.append("```")
+
+        return "\n".join(schema_lines)
+
+    except Exception as e:
+        # Fallback to a hardcoded schema if extraction fails
+        return """ChartConfigSchema Structure:
+```json
+{
+  "chartType": "line | bar | pie | area | radial | kpi | table", // Type of chart
+  "title": "string", // Title of the chart
+  "description": "string", // Description of the chart
+  "data": [ // Data for the chart
+    { "key": "value", ... }, // Array of data objects
+    ...
+  ],
+  "chartConfig": {
+    "<item_name>": {
+      "label": "string", // Display label for the chart item
+      "color": "string"  // Color value (e.g., "var(--chart-1)" or hex)
+    }
+  }, // Dictionary of chart items
+  "xAxisConfig": {
+    "dataKey": "string" // The data key to use for the X-axis
+  } // X-axis configuration
+}
+```"""
+
+
 class DataValidationResult(BaseModel):
     """Structured output for data validation assessment"""
-    
-    is_valid: bool = Field(description="Whether the generated data meets the requirements")
-    confidence_level: int = Field(description="Confidence level from 0-100", ge=0, le=100)
+
+    is_valid: bool = Field(
+        description="Whether the generated data meets the requirements"
+    )
+    confidence_level: int = Field(
+        description="Confidence level from 0-100", ge=0, le=100
+    )
     explanation: str = Field(description="Detailed explanation of validation result")
     missing_requirements: Optional[List[str]] = Field(
-        default=None, 
-        description="List of missing requirements if validation fails"
+        default=None, description="List of missing requirements if validation fails"
     )
     data_quality_issues: Optional[List[str]] = Field(
-        default=None,
-        description="List of data quality issues identified"
+        default=None, description="List of data quality issues identified"
     )
 
 
 @tool
 def fetch_data_tool(
     state: Annotated[WidgetAgentState, InjectedState],
-    tool_call_id: Annotated[str, InjectedToolCallId]
+    tool_call_id: Annotated[str, InjectedToolCallId],
 ) -> Command:
     """Fetches data from file IDs in state and updates state with fetched data."""
     try:
@@ -67,15 +266,15 @@ def fetch_data_tool(
         except ImportError as import_error:
             # Try alternative import paths
             try:
-                import sys
                 import os
-                
+                import sys
+
                 # Add src to path if not already there
                 current_dir = os.path.dirname(os.path.abspath(__file__))
-                src_dir = os.path.join(current_dir, '..', '..', '..')  # Go up to src/
+                src_dir = os.path.join(current_dir, "..", "..", "..")  # Go up to src/
                 if src_dir not in sys.path:
                     sys.path.insert(0, src_dir)
-                
+
                 from actions.dashboard import (
                     get_data_from_file,
                     get_sample_from_file,
@@ -89,13 +288,14 @@ def fetch_data_tool(
         if not file_ids:
             return Command(
                 update={
-                    "error_messages": state.error_messages + ["No file IDs provided for data fetching"],
+                    "error_messages": state.error_messages
+                    + ["No file IDs provided for data fetching"],
                     "messages": [
                         ToolMessage(
                             content="Error: No file IDs provided for data fetching",
-                            tool_call_id=tool_call_id
+                            tool_call_id=tool_call_id,
                         )
-                    ]
+                    ],
                 }
             )
 
@@ -111,19 +311,25 @@ def fetch_data_tool(
 
                 # Always fetch schema and sample data
                 schema_data = get_schema_from_file(file_id)
-                schemas_info.append({
-                    "file_id": file_id,
-                    "columns": len(schema_data.get("columns", [])),
-                    "total_rows": schema_data.get("total_rows", 0),
-                    "column_names": [col["name"] for col in schema_data.get("columns", [])]
-                })
-                
+                schemas_info.append(
+                    {
+                        "file_id": file_id,
+                        "columns": len(schema_data.get("columns", [])),
+                        "total_rows": schema_data.get("total_rows", 0),
+                        "column_names": [
+                            col["name"] for col in schema_data.get("columns", [])
+                        ],
+                    }
+                )
+
                 sample_data = get_sample_from_file(file_id)
-                samples_info.append({
-                    "file_id": file_id,
-                    "headers": sample_data.get("headers", []),
-                    "sample_rows": sample_data.get("sample_rows_returned", 0)
-                })
+                samples_info.append(
+                    {
+                        "file_id": file_id,
+                        "headers": sample_data.get("headers", []),
+                        "sample_rows": sample_data.get("sample_rows_returned", 0),
+                    }
+                )
 
             except Exception as file_error:
                 return f"Failed to fetch data for file {file_id}: {str(file_error)}"
@@ -132,31 +338,46 @@ def fetch_data_tool(
         raw_data_json = {}
         for file_id, df in raw_data.items():
             # Convert DataFrame to dict with records orientation
-            raw_data_json[file_id] = df.to_dict('records')
-        
+            raw_data_json[file_id] = df.to_dict("records")
+
         # Create FileSchema objects
-        file_schemas_objects = [FileSchema(
-            file_id=info["file_id"],
-            columns=[ColumnInfo(name=col, type="unknown", null_count=0, unique_count=0) 
-                    for col in info["column_names"]],
-            total_rows=info["total_rows"],
-            total_columns=len(info["column_names"])
-        ) for info in schemas_info]
-        
-        # Create FileSampleData objects
-        file_sample_objects = [FileSampleData(
-            file_id=info["file_id"],
-            headers=info["headers"],
-            rows=[],  # Could populate from sample data if needed
-            total_rows_in_file=schemas_info[i]["total_rows"] if i < len(schemas_info) else 0,
-            sample_rows_returned=info["sample_rows"]
-        ) for i, info in enumerate(samples_info)]
-        
-        success_message = f"Successfully fetched data from {len(file_ids)} files:\n" + "\n".join([
-            f"File {info['file_id']}: {info['total_rows']} rows, columns: {', '.join(info['column_names'][:5])}{'...' if len(info['column_names']) > 5 else ''}"
+        file_schemas_objects = [
+            FileSchema(
+                file_id=info["file_id"],
+                columns=[
+                    ColumnInfo(name=col, type="unknown", null_count=0, unique_count=0)
+                    for col in info["column_names"]
+                ],
+                total_rows=info["total_rows"],
+                total_columns=len(info["column_names"]),
+            )
             for info in schemas_info
-        ])
-        
+        ]
+
+        # Create FileSampleData objects
+        file_sample_objects = [
+            FileSampleData(
+                file_id=info["file_id"],
+                headers=info["headers"],
+                rows=[],  # Could populate from sample data if needed
+                total_rows_in_file=schemas_info[i]["total_rows"]
+                if i < len(schemas_info)
+                else 0,
+                sample_rows_returned=info["sample_rows"],
+            )
+            for i, info in enumerate(samples_info)
+        ]
+
+        success_message = (
+            f"Successfully fetched data from {len(file_ids)} files:\n"
+            + "\n".join(
+                [
+                    f"File {info['file_id']}: {info['total_rows']} rows, columns: {', '.join(info['column_names'][:5])}{'...' if len(info['column_names']) > 5 else ''}"
+                    for info in schemas_info
+                ]
+            )
+        )
+
         # Return Command to immediately update state
         return Command(
             update={
@@ -164,11 +385,8 @@ def fetch_data_tool(
                 "file_schemas": file_schemas_objects,
                 "file_sample_data": file_sample_objects,
                 "messages": [
-                    ToolMessage(
-                        content=success_message,
-                        tool_call_id=tool_call_id
-                    )
-                ]
+                    ToolMessage(content=success_message, tool_call_id=tool_call_id)
+                ],
             }
         )
 
@@ -177,12 +395,7 @@ def fetch_data_tool(
         return Command(
             update={
                 "error_messages": state.error_messages + [error_msg],
-                "messages": [
-                    ToolMessage(
-                        content=error_msg,
-                        tool_call_id=tool_call_id
-                    )
-                ]
+                "messages": [ToolMessage(content=error_msg, tool_call_id=tool_call_id)],
             }
         )
 
@@ -190,7 +403,7 @@ def fetch_data_tool(
 @tool
 def e2b_sandbox_tool(
     state: Annotated[WidgetAgentState, InjectedState],
-    tool_call_id: Annotated[str, InjectedToolCallId]
+    tool_call_id: Annotated[str, InjectedToolCallId],
 ) -> Command:
     """Executes Python code using E2B sandbox with state data context."""
     try:
@@ -199,19 +412,20 @@ def e2b_sandbox_tool(
         if not code:
             return Command(
                 update={
-                    "error_messages": state.error_messages + ["No generated code to execute"],
+                    "error_messages": state.error_messages
+                    + ["No generated code to execute"],
                     "messages": [
                         ToolMessage(
                             content="Error: No generated code to execute",
-                            tool_call_id=tool_call_id
+                            tool_call_id=tool_call_id,
                         )
-                    ]
+                    ],
                 }
             )
-            
+
         # Get raw data from state
         raw_data = state.raw_file_data or {}
-        
+
         # Debug: Check if we have raw data
         if not raw_data:
             error_msg = "No raw file data available in state. The fetch_data_tool may not have run successfully."
@@ -220,14 +434,11 @@ def e2b_sandbox_tool(
                     "code_execution_result": {"error": "No raw data available"},
                     "error_messages": state.error_messages + [error_msg],
                     "messages": [
-                        ToolMessage(
-                            content=error_msg,
-                            tool_call_id=tool_call_id
-                        )
-                    ]
+                        ToolMessage(content=error_msg, tool_call_id=tool_call_id)
+                    ],
                 }
             )
-        
+
         # Create a fresh E2B sandbox instance for each execution
         try:
             sandbox = create_e2b_sandbox()
@@ -240,19 +451,16 @@ def e2b_sandbox_tool(
                     "code_execution_result": {"error": error_msg},
                     "error_messages": state.error_messages + [error_msg],
                     "messages": [
-                        ToolMessage(
-                            content=error_msg,
-                            tool_call_id=tool_call_id
-                        )
-                    ]
+                        ToolMessage(content=error_msg, tool_call_id=tool_call_id)
+                    ],
                 }
             )
-        
+
         with sandbox:
             # Prepare the execution context with raw_data and reconstruct DataFrames
             # Avoid f-string nesting issues by pre-serializing the data
             raw_data_json = json.dumps(raw_data, default=str)
-            
+
             context_setup = f"""
 import json
 import pandas as pd
@@ -298,7 +506,7 @@ else:
     df = pd.DataFrame()  # Create empty DataFrame if no data
     print("Warning: No raw data available, created empty DataFrame")
 """
-            
+
             # Execute context setup first
             setup_execution = sandbox.run_code(context_setup)
             if setup_execution.error:
@@ -308,20 +516,19 @@ else:
                         "code_execution_result": {"error": setup_execution.error},
                         "error_messages": state.error_messages + [error_msg],
                         "messages": [
-                            ToolMessage(
-                                content=error_msg,
-                                tool_call_id=tool_call_id
-                            )
-                        ]
+                            ToolMessage(content=error_msg, tool_call_id=tool_call_id)
+                        ],
                     }
                 )
-            
+
             # Get output from logs.stdout since text is None in this E2B version
             setup_output = ""
             if setup_execution.logs and setup_execution.logs.stdout:
                 setup_output = "".join(setup_execution.logs.stdout)
-            print(f"Context setup output: {setup_output if setup_output else 'No output'}")
-            
+            print(
+                f"Context setup output: {setup_output if setup_output else 'No output'}"
+            )
+
             # Add a verification step to check if DataFrame was loaded properly
             verification_code = """
 print("=== DATA VERIFICATION ===")
@@ -343,8 +550,10 @@ print("=========================")
                 verification_output = ""
                 if verification_execution.logs and verification_execution.logs.stdout:
                     verification_output = "".join(verification_execution.logs.stdout)
-                print(f"Verification output: {verification_output if verification_output else 'No output'}")
-            
+                print(
+                    f"Verification output: {verification_output if verification_output else 'No output'}"
+                )
+
             # Execute the main code and capture any execution errors
             main_execution = sandbox.run_code(code)
             if main_execution.error:
@@ -354,14 +563,11 @@ print("=========================")
                         "code_execution_result": {"error": main_execution.error},
                         "error_messages": state.error_messages + [error_msg],
                         "messages": [
-                            ToolMessage(
-                                content=error_msg,
-                                tool_call_id=tool_call_id
-                            )
-                        ]
+                            ToolMessage(content=error_msg, tool_call_id=tool_call_id)
+                        ],
                     }
                 )
-            
+
             # Try to extract 'result' variable from the sandbox session
             try:
                 extract_result_code = """
@@ -382,122 +588,155 @@ else:
     print("RESULT_END")
 """
                 extract_execution = sandbox.run_code(extract_result_code)
-                
+
                 if extract_execution.error:
                     error_msg = f"Result extraction failed: {extract_execution.error}"
                     return Command(
                         update={
-                            "code_execution_result": {"error": extract_execution.error, "raw_output": main_execution.text if main_execution.text else "No output captured"},
+                            "code_execution_result": {
+                                "error": extract_execution.error,
+                                "raw_output": main_execution.text
+                                if main_execution.text
+                                else "No output captured",
+                            },
                             "error_messages": state.error_messages + [error_msg],
                             "messages": [
                                 ToolMessage(
-                                    content=error_msg,
-                                    tool_call_id=tool_call_id
+                                    content=error_msg, tool_call_id=tool_call_id
                                 )
-                            ]
+                            ],
                         }
                     )
-                
+
                 # Get output from logs.stdout since text is None in this E2B version
                 output = ""
                 if extract_execution.logs and extract_execution.logs.stdout:
                     output = "".join(extract_execution.logs.stdout)
-                
+
                 # Handle case where execution returns no output
                 if not output:
                     # Get main execution output for debugging
                     main_output = ""
                     if main_execution.logs and main_execution.logs.stdout:
                         main_output = "".join(main_execution.logs.stdout)
-                    
+
                     error_msg = "E2B sandbox execution returned no output. This usually indicates an API connection issue or the code didn't execute properly."
                     return Command(
                         update={
-                            "code_execution_result": {"error": "No output from sandbox", "raw_output": main_output if main_output else "No output captured"},
+                            "code_execution_result": {
+                                "error": "No output from sandbox",
+                                "raw_output": main_output
+                                if main_output
+                                else "No output captured",
+                            },
                             "error_messages": state.error_messages + [error_msg],
                             "messages": [
                                 ToolMessage(
-                                    content=error_msg,
-                                    tool_call_id=tool_call_id
+                                    content=error_msg, tool_call_id=tool_call_id
                                 )
-                            ]
+                            ],
                         }
                     )
-                
+
                 # Extract the JSON result from the output
                 if "RESULT_START" in output and "RESULT_END" in output:
                     start_idx = output.find("RESULT_START") + len("RESULT_START")
                     end_idx = output.find("RESULT_END")
                     result_json = output[start_idx:end_idx].strip()
                     parsed_result = json.loads(result_json)
-                    
-                    # Return Command with execution result
-                    success_msg = f"Code executed successfully. Result: {json.dumps(parsed_result, indent=2)[:500]}{'...' if len(str(parsed_result)) > 500 else ''}"
-                    return Command(
-                        update={
-                            "code_execution_result": parsed_result,
-                            "messages": [
-                                ToolMessage(
-                                    content=success_msg,
-                                    tool_call_id=tool_call_id
-                                )
-                            ]
-                        }
-                    )
+
+                    # Validate the result against ChartConfigSchema
+                    try:
+                        validated_result = ChartConfigSchema(**parsed_result)
+                        # If validation succeeds, use the validated result
+                        validated_dict = validated_result.model_dump()
+
+                        success_msg = f"Code executed successfully and passed schema validation. Result: {json.dumps(validated_dict, indent=2)[:500]}{'...' if len(str(validated_dict)) > 500 else ''}"
+                        return Command(
+                            update={
+                                "code_execution_result": validated_dict,
+                                "messages": [
+                                    ToolMessage(
+                                        content=success_msg, tool_call_id=tool_call_id
+                                    )
+                                ],
+                            }
+                        )
+                    except Exception as validation_error:
+                        # Schema validation failed - create detailed error message
+                        schema_error_details = _analyze_schema_validation_error(
+                            parsed_result, validation_error
+                        )
+
+                        error_msg = f"Code execution succeeded but result does not match ChartConfigSchema. {schema_error_details}"
+                        return Command(
+                            update={
+                                "code_execution_result": {
+                                    "error": "Schema validation failed",
+                                    "validation_details": schema_error_details,
+                                    "raw_result": parsed_result,
+                                },
+                                "error_messages": state.error_messages + [error_msg],
+                                "messages": [
+                                    ToolMessage(
+                                        content=error_msg, tool_call_id=tool_call_id
+                                    )
+                                ],
+                            }
+                        )
                 else:
                     # Get main execution output for debugging
                     main_output = ""
                     if main_execution.logs and main_execution.logs.stdout:
                         main_output = "".join(main_execution.logs.stdout)
-                    
+
                     # Return raw output with error context for retry
                     error_msg = f"Could not extract result from code execution. Raw output: {str(main_output)[:500]}{'...' if len(str(main_output)) > 500 else ''}"
                     return Command(
                         update={
-                            "code_execution_result": {"error": "No result variable found", "raw_output": main_output},
+                            "code_execution_result": {
+                                "error": "No result variable found",
+                                "raw_output": main_output,
+                            },
                             "error_messages": state.error_messages + [error_msg],
                             "messages": [
                                 ToolMessage(
-                                    content=error_msg,
-                                    tool_call_id=tool_call_id
+                                    content=error_msg, tool_call_id=tool_call_id
                                 )
-                            ]
+                            ],
                         }
                     )
-                    
+
             except Exception as extract_error:
                 # If extraction fails, return error with context for potential retry
                 # Get main execution output for debugging
                 main_output = ""
                 if main_execution.logs and main_execution.logs.stdout:
                     main_output = "".join(main_execution.logs.stdout)
-                
+
                 error_msg = f"Result extraction failed: {str(extract_error)}. This usually means the generated code doesn't end with 'result = final_output'"
                 return Command(
                     update={
-                        "code_execution_result": {"error": str(extract_error), "raw_output": main_output if main_output else "No output captured"},
+                        "code_execution_result": {
+                            "error": str(extract_error),
+                            "raw_output": main_output
+                            if main_output
+                            else "No output captured",
+                        },
                         "error_messages": state.error_messages + [error_msg],
                         "messages": [
-                            ToolMessage(
-                                content=error_msg,
-                                tool_call_id=tool_call_id
-                            )
-                        ]
+                            ToolMessage(content=error_msg, tool_call_id=tool_call_id)
+                        ],
                     }
                 )
-                
+
     except Exception as e:
         error_msg = f"E2B sandbox execution failed: {str(e)}"
         return Command(
             update={
                 "code_execution_result": {"error": str(e)},
                 "error_messages": state.error_messages + [error_msg],
-                "messages": [
-                    ToolMessage(
-                        content=error_msg,
-                        tool_call_id=tool_call_id
-                    )
-                ]
+                "messages": [ToolMessage(content=error_msg, tool_call_id=tool_call_id)],
             }
         )
 
@@ -505,7 +744,7 @@ else:
 @tool
 def generate_python_code_tool(
     state: Annotated[WidgetAgentState, InjectedState],
-    tool_call_id: Annotated[str, InjectedToolCallId]
+    tool_call_id: Annotated[str, InjectedToolCallId],
 ) -> Command:
     """Generates Python code for processing widget data based on state requirements and file schemas."""
     try:
@@ -513,29 +752,45 @@ def generate_python_code_tool(
         widget_type = state.widget_type
         user_request = state.user_prompt
         operation = state.operation
-        
-        
+
         # Get schema information from state
         file_schemas = state.file_schemas or []
         file_sample_data = state.file_sample_data or []
         raw_file_data = state.raw_file_data or {}
-        
+
         # Convert to simple format for prompt
-        schemas_info = [{
-            "file_id": schema.file_id,
-            "columns": [col.name for col in schema.columns],
-            "total_rows": schema.total_rows
-        } for schema in file_schemas] if isinstance(file_schemas, list) else []
-        
-        samples_info = [{
-            "file_id": sample.file_id,
-            "headers": sample.headers,
-            "sample_rows": sample.sample_rows_returned
-        } for sample in file_sample_data] if isinstance(file_sample_data, list) else []
-        
+        schemas_info = (
+            [
+                {
+                    "file_id": schema.file_id,
+                    "columns": [col.name for col in schema.columns],
+                    "total_rows": schema.total_rows,
+                }
+                for schema in file_schemas
+            ]
+            if isinstance(file_schemas, list)
+            else []
+        )
+
+        samples_info = (
+            [
+                {
+                    "file_id": sample.file_id,
+                    "headers": sample.headers,
+                    "sample_rows": sample.sample_rows_returned,
+                }
+                for sample in file_sample_data
+            ]
+            if isinstance(file_sample_data, list)
+            else []
+        )
+
+        # Get the schema string programmatically
+        chart_config_schema = get_chart_config_schema_string()
+
         # Create a code generation agent
         code_gen_llm = init_chat_model("openai:gpt-5")
-        
+
         code_generation_prompt = f"""
 You are a Python data analysis expert specializing in pandas and data manipulation. Given a dataset schema, sample data, and a user's request, generate valid Python code to analyze and manipulate the data for the specified widget type and operation.
 
@@ -591,42 +846,81 @@ PANDAS DATE/TIME REQUIREMENTS:
 - For date/time extraction, use dt accessor: df['date_column'].dt.year, df['date_column'].dt.month
 - For date comparisons, ensure both sides are datetime objects
 - When parsing custom date formats, use: pd.to_datetime(df['date_column'], format='%d/%m/%Y')
-- For date truncation, use dt.floor(): df['date_column'].dt.floor('D') for daily, 'M' for monthly
+- For date truncation by month: df['date_column'].dt.to_period('M').dt.start_time (NOT dt.floor('M'))
+- For date truncation by day: df['date_column'].dt.floor('D')
 - Use dt.strftime() for date formatting: df['date_column'].dt.strftime('%Y-%m-%d')
 - Handle timezone-aware dates using dt.tz_localize() or dt.tz_convert()
 - For date arithmetic, use pd.Timedelta: df['date_column'] + pd.Timedelta(days=1)
+- CRITICAL: Never use dt.floor('M') - use dt.to_period('M').dt.start_time for monthly grouping
 
-EXPECTED OUTPUT FORMAT:
+REQUIRED OUTPUT SCHEMA:
+Your generated Python code MUST produce a result that follows this exact schema structure:
+
+{chart_config_schema}
+
+CRITICAL REQUIREMENTS:
+- The final line MUST assign the result to a variable named 'result'
+- The result MUST be a dictionary that matches the ChartConfigSchema structure exactly
+- ALWAYS end with: result = {{"chartType": "{widget_type}", "title": "...", "description": "...", "data": [...], "chartConfig": {{}}, "xAxisConfig": {{}}}}
+- DO NOT end with print() statements - use result = instead
+
+SCHEMA COMPLIANCE:
+- chartType: Must be one of: "line", "bar", "pie", "area", "radial", "kpi", "table"
+- title: String describing the chart/widget
+- description: String explaining what the chart shows
+- data: Array of objects containing the actual data points
+- chartConfig: Dictionary where keys are data field names and values contain label and color
+- xAxisConfig: Object with dataKey specifying which field to use for X-axis
+
+EXAMPLE RESULT STRUCTURE:
+```python
+result = {{
+    "chartType": "{widget_type}",
+    "title": "Your Chart Title",
+    "description": "Description of what this chart shows",
+    "data": [
+        {{"category": "Jan", "value": 100}},
+        {{"category": "Feb", "value": 150}},
+        # ... more data points
+    ],
+    "chartConfig": {{
+        "value": {{
+            "label": "Value Label",
+            "color": "var(--chart-1)"
+        }}
+        # Add more chart config items for each data field
+    }},
+    "xAxisConfig": {{
+        "dataKey": "category"
+    }}
+}}
+```
+
+IMPORTANT:
 - Return executable Python code that processes the DataFrame 'df'
 - Code should be optimized for the specified WIDGET TYPE ({widget_type}) and OPERATION ({operation})
-- CRITICAL: The final line MUST assign the result to a variable named 'result'
-  * ALWAYS end with: result = your_final_data
-  * Examples: result = df.groupby('column').sum(), result = monthly_trends, result = final_output
-  * DO NOT end with print() statements - use result = instead
-- The result should be in the format suitable for the specified widget type:
-  * For line/bar charts: dict with 'x' and 'y' arrays or 'categories' and 'values' arrays
-  * For pie charts: array of objects with 'label' and 'value' properties
-  * For tables: array of objects (records format)
-  * For KPI: dict with 'value' property and optional 'change', 'trend' properties
 - Ensure the code is ready to execute without additional setup
 - OPTIONAL: Start with basic data inspection if needed: print(df.shape), print(df.columns)
 - If the DataFrame appears empty or missing expected columns, include error handling
+- The result MUST strictly follow the ChartConfigSchema structure above
 
 USER REQUEST: {user_request}
 
 AVAILABLE DATA SUMMARY:
 - File count: {len(schemas_info)}
-- Total rows available: {sum(schema.get('total_rows', 0) for schema in schemas_info)}
-- Column information: {', '.join([f"{schema.get('file_id', 'unknown')}: {len(schema.get('columns', []))} columns" for schema in schemas_info])}
+- Total rows available: {sum(schema.get("total_rows", 0) for schema in schemas_info)}
+- Column information: {", ".join([f"{schema.get('file_id', 'unknown')}: {len(schema.get('columns', []))} columns" for schema in schemas_info])}
 
 REMEMBER: The DataFrame 'df' is already loaded with your data. You can immediately start working with it.
 
 """
-        
+
         # Check if there are previous errors to include in the prompt for retry
         error_context = ""
         if state.error_messages:
-            recent_errors = state.error_messages[-2:]  # Include last 2 errors for context
+            recent_errors = state.error_messages[
+                -2:
+            ]  # Include last 2 errors for context
             error_context = f"""
 
 PREVIOUS ERRORS TO FIX:
@@ -634,41 +928,35 @@ PREVIOUS ERRORS TO FIX:
 
 Please fix these issues in your generated code.
 """
-        
+
         final_prompt = code_generation_prompt + error_context
         generated_code = code_gen_llm.invoke(final_prompt).content
-        
+
         # Clean up the code (remove markdown formatting if present)
         if "```python" in generated_code:
-            generated_code = generated_code.split("```python")[1].split("```")[0].strip()
+            generated_code = (
+                generated_code.split("```python")[1].split("```")[0].strip()
+            )
         elif "```" in generated_code:
             generated_code = generated_code.split("```")[1].split("```")[0].strip()
-        
+
         # Return Command with generated code
         success_msg = f"Generated Python code for {widget_type} widget:\n```python\n{generated_code}\n```"
         return Command(
             update={
                 "generated_code": generated_code,
                 "messages": [
-                    ToolMessage(
-                        content=success_msg,
-                        tool_call_id=tool_call_id
-                    )
-                ]
+                    ToolMessage(content=success_msg, tool_call_id=tool_call_id)
+                ],
             }
         )
-        
+
     except Exception as e:
         error_msg = f"Code generation failed: {str(e)}"
         return Command(
             update={
                 "error_messages": state.error_messages + [error_msg],
-                "messages": [
-                    ToolMessage(
-                        content=error_msg,
-                        tool_call_id=tool_call_id
-                    )
-                ]
+                "messages": [ToolMessage(content=error_msg, tool_call_id=tool_call_id)],
             }
         )
 
@@ -679,13 +967,13 @@ class WorkerNodes:
     def __init__(self, llm_model: str = "openai:gpt-4o-mini"):
         """Initialize worker nodes with LLM."""
         self.llm_model = llm_model
-        
+
         # Create extended state schema that includes required AgentState fields
         # Define reducers for fields that might be updated concurrently
         def take_last(old, new):
             """Reducer that takes the last (most recent) value"""
             return new if new is not None else old
-            
+
         def merge_lists(old, new):
             """Reducer that extends lists with new items"""
             if old is None:
@@ -695,12 +983,12 @@ class WorkerNodes:
             if isinstance(new, list):
                 return old + new
             return old + [new]
-        
+
         class ExtendedWidgetState(TypedDict):
             # Required AgentState fields for create_react_agent
             messages: Annotated[Sequence[BaseMessage], add_messages]
             remaining_steps: int
-            
+
             # Custom WidgetAgentState fields (with reducers for concurrent updates)
             task_id: str
             task_status: Annotated[Optional[str], take_last]
@@ -709,6 +997,7 @@ class WorkerNodes:
             operation: Literal["CREATE", "UPDATE", "DELETE"]
             widget_type: Literal["line", "bar", "pie", "area", "radial", "kpi", "table"]
             widget_id: str
+            dashboard_id: str
             file_ids: List[str]
             file_sample_data: Annotated[Optional[List[FileSampleData]], take_last]
             file_schemas: Annotated[Optional[List[FileSchema]], take_last]
@@ -724,9 +1013,13 @@ class WorkerNodes:
             iteration_count: Annotated[Optional[int], take_last]
             current_step: Annotated[Optional[str], take_last]
             widget_supervisor_reasoning: Annotated[Optional[str], take_last]
+            # Database operation completion flags
+            widget_creation_completed: Annotated[Optional[bool], take_last]
+            widget_update_completed: Annotated[Optional[bool], take_last]
+            widget_deletion_completed: Annotated[Optional[bool], take_last]
             created_at: datetime
             updated_at: Annotated[Optional[datetime], take_last]
-        
+
         # Create the main data processing agent with extended state schema
         self.data_agent = create_react_agent(
             model=llm_model,
@@ -740,10 +1033,10 @@ class WorkerNodes:
 
 Always follow this sequence: fetch data → generate code → execute code.
 Make sure the final result matches the required format for the widget type.
-            """
+            """,
         )
-        
-        # Create code generation sub-agent 
+
+        # Create code generation sub-agent
         self.code_generator_agent = create_react_agent(
             model=llm_model,
             tools=[generate_python_code_tool],
@@ -751,9 +1044,9 @@ Make sure the final result matches the required format for the widget type.
             Generate clean, efficient Python code that transforms raw data into the exact format required for each widget type.
             Focus on data manipulation using pandas and numpy when needed.
             Always set your final result in a variable called 'result'.
-            """
+            """,
         )
-                                                                                                                                                                                                                                                                                                           
+
     def data_node(self, state: WidgetAgentState) -> Command:
         """Unified data processing node using create_react_agent with proper state handling."""
         try:
@@ -770,7 +1063,7 @@ Please:
 2. Use generate_python_code_tool (no parameters needed - extracts requirements from state)
 3. Use e2b_sandbox_tool (no parameters needed - executes generated code from state)
             """
-            
+
             # Convert WidgetAgentState to ExtendedWidgetState format
             agent_input = {
                 "messages": [{"role": "user", "content": initial_message}],
@@ -782,6 +1075,7 @@ Please:
                 "operation": state.operation,
                 "widget_type": state.widget_type,
                 "widget_id": state.widget_id,
+                "dashboard_id": state.dashboard_id,
                 "file_ids": state.file_ids,
                 "file_sample_data": state.file_sample_data or [],
                 "file_schemas": state.file_schemas or [],
@@ -797,34 +1091,58 @@ Please:
                 "iteration_count": state.iteration_count,
                 "current_step": state.current_step,
                 "widget_supervisor_reasoning": state.widget_supervisor_reasoning,
+                # Database operation completion flags
+                "widget_creation_completed": state.widget_creation_completed,
+                "widget_update_completed": state.widget_update_completed,
+                "widget_deletion_completed": state.widget_deletion_completed,
                 "created_at": state.created_at,
-                "updated_at": state.updated_at
+                "updated_at": state.updated_at,
             }
-            
+
             # Invoke the create_react_agent - it will handle tool calling with state injection
             agent_result = self.data_agent.invoke(agent_input)
-            
+
             # The agent result contains the updated state from Command objects
             # Extract what we need for the parent graph
             update_dict = {
                 "task_status": "in_progress",
                 "updated_at": datetime.now(),
-                "iteration_count": state.iteration_count + 1
+                "iteration_count": state.iteration_count + 1,
             }
-            
+
             # Extract updated fields from agent result
             # Only extract fields that were actually updated by the tools
-            if "raw_file_data" in agent_result and agent_result["raw_file_data"] is not None:
+            if (
+                "raw_file_data" in agent_result
+                and agent_result["raw_file_data"] is not None
+            ):
                 update_dict["raw_file_data"] = agent_result["raw_file_data"]
-            if "file_schemas" in agent_result and agent_result["file_schemas"] is not None:
+            if (
+                "file_schemas" in agent_result
+                and agent_result["file_schemas"] is not None
+            ):
                 update_dict["file_schemas"] = agent_result["file_schemas"]
-            if "file_sample_data" in agent_result and agent_result["file_sample_data"] is not None:
+            if (
+                "file_sample_data" in agent_result
+                and agent_result["file_sample_data"] is not None
+            ):
                 update_dict["file_sample_data"] = agent_result["file_sample_data"]
-            if "generated_code" in agent_result and agent_result["generated_code"] is not None:
+            if (
+                "generated_code" in agent_result
+                and agent_result["generated_code"] is not None
+            ):
                 update_dict["generated_code"] = agent_result["generated_code"]
-            if "code_execution_result" in agent_result and agent_result["code_execution_result"] is not None:
-                update_dict["code_execution_result"] = agent_result["code_execution_result"]
-            if "error_messages" in agent_result and agent_result["error_messages"] is not None:
+            if (
+                "code_execution_result" in agent_result
+                and agent_result["code_execution_result"] is not None
+            ):
+                update_dict["code_execution_result"] = agent_result[
+                    "code_execution_result"
+                ]
+            if (
+                "error_messages" in agent_result
+                and agent_result["error_messages"] is not None
+            ):
                 # For error_messages, we want to merge with existing ones
                 existing_errors = state.error_messages or []
                 new_errors = agent_result["error_messages"]
@@ -832,25 +1150,27 @@ Please:
                     all_errors = existing_errors + new_errors
                 else:
                     all_errors = existing_errors + [new_errors]
-                update_dict["error_messages"] = list(set(all_errors))  # Remove duplicates
-                
+                update_dict["error_messages"] = list(
+                    set(all_errors)
+                )  # Remove duplicates
+
                 # Check if there's an error in the execution result
-                if (isinstance(agent_result.get("code_execution_result"), dict) and 
-                    "error" in agent_result["code_execution_result"]):
+                if (
+                    isinstance(agent_result.get("code_execution_result"), dict)
+                    and "error" in agent_result["code_execution_result"]
+                ):
                     error_msg = f"Code execution returned error: {agent_result['code_execution_result']['error']}"
                     if error_msg not in update_dict["error_messages"]:
                         update_dict["error_messages"].append(error_msg)
-            
-            return Command(
-                goto="widget_supervisor",
-                update=update_dict
-            )
-            
+
+            return Command(goto="widget_supervisor", update=update_dict)
+
         except Exception as e:
             return Command(
                 goto="widget_supervisor",
                 update={
-                    "error_messages": state.error_messages + [f"Data node error: {str(e)}"],
+                    "error_messages": state.error_messages
+                    + [f"Data node error: {str(e)}"],
                     "updated_at": datetime.now(),
                     "task_status": "failed",  # Only update task_status in error case
                 },
@@ -858,25 +1178,30 @@ Please:
 
     def validate_data_node(self, state: WidgetAgentState) -> Command:
         """LLM-based validation that analyzes generated data against user requirements."""
-        
+
         try:
             # Check if we have execution result
             if state.code_execution_result is None:
                 return Command(
                     goto="widget_supervisor",
                     update={
-                        "error_messages": state.error_messages + ["No execution result to validate"],
+                        "error_messages": state.error_messages
+                        + ["No execution result to validate"],
                         "data_validated": False,
                         "updated_at": datetime.now(),
                     },
                 )
 
             # Check for execution errors first
-            if (isinstance(state.code_execution_result, dict) and "error" in state.code_execution_result):
+            if (
+                isinstance(state.code_execution_result, dict)
+                and "error" in state.code_execution_result
+            ):
                 return Command(
                     goto="widget_supervisor",
                     update={
-                        "error_messages": state.error_messages + [
+                        "error_messages": state.error_messages
+                        + [
                             f"Code execution returned error: {state.code_execution_result['error']}"
                         ],
                         "data_validated": False,
@@ -886,88 +1211,104 @@ Please:
 
             # Get first 10 rows/items of generated data for validation
             sample_data = self._get_data_sample(state.code_execution_result)
-            
-            # Get data schema information  
+
+            # Get data schema information
             data_schema = self._analyze_data_structure(state.code_execution_result)
-            
+
             # Create validation prompt for LLM
-            validation_llm = init_chat_model("openai:gpt-4o-mini").with_structured_output(DataValidationResult)
-            
+            validation_llm = init_chat_model(
+                "openai:gpt-4o-mini"
+            ).with_structured_output(DataValidationResult)
+
             validation_prompt = f"""
-You are a data validation expert. Analyze the generated data against the user requirements and task description.
+You are a data validation expert specializing in sample-based quality assessment. Your task is to evaluate whether the generated data sample is "on the right track" and aligns with user requirements.
+
+⚠️ CRITICAL CONTEXT: You are analyzing only a SAMPLE (first 10 records) of what may be a much larger dataset. Do NOT penalize for missing data points that aren't in the sample - focus on whether the sample demonstrates correct alignment.
 
 TASK DESCRIPTION: {state.task_instructions}
 USER PROMPT: {state.user_prompt}
 WIDGET TYPE: {state.widget_type}
 OPERATION: {state.operation}
 
-GENERATED DATA SAMPLE (first 10 items):
+GENERATED CHART CONFIG SAMPLE (first 10 records only):
 {json.dumps(sample_data, indent=2, default=str)}
 
-DATA SCHEMA ANALYSIS:
+CHART CONFIG ANALYSIS:
 {json.dumps(data_schema, indent=2)}
 
-VALIDATION CRITERIA:
-1. Does the data structure match the widget type requirements?
-   - Line/Area charts: dict with 'x' and 'y' arrays
-   - Bar charts: dict with 'categories' and 'values' arrays  
-   - Pie charts: array of objects with 'label' and 'value' properties
-   - Tables: array of objects (records)
-   - KPI: dict with 'value' property
+SAMPLE CONTEXT:
+Original dataset: {sample_data.get("_sampling_info", {}).get("original_count", "unknown")} records
+Sample shown: {sample_data.get("_sampling_info", {}).get("sampled_count", "unknown")} records
+Is sampled: {sample_data.get("_sampling_info", {}).get("is_sampled", "unknown")}
 
-2. Does the data content align with the user's request?
-3. Are the data types appropriate?
-4. Is the data complete and not empty?
-5. Does the data make sense for the specified operation?
+EVALUATION CRITERIA (Sample-Based):
+✅ Structure Validation: Is the ChartConfigSchema properly formed with all required fields?
+✅ Data Alignment: Do the sample records match the user's request (correct field names, logical values)?
+✅ Chart Configuration: Are chartConfig mappings sensible for the data fields present?
+✅ Axis Setup: Is xAxisConfig.dataKey pointing to a valid field that exists in the sample?
+✅ Metadata Quality: Are title/description relevant and descriptive?
+✅ Data Logic: Does the sample data follow patterns that make sense for the request?
+
+VALIDATION APPROACH:
+- HIGH CONFIDENCE (85+): Sample clearly demonstrates correct approach, structure, and alignment
+- MEDIUM CONFIDENCE (70-84): Sample shows mostly correct approach with minor issues
+- LOW CONFIDENCE (<70): Sample has structural problems or clear misalignment
+
+KEY PRINCIPLE: If the sample is well-structured and shows the right data patterns, assume the full dataset follows the same logic. Do NOT reduce confidence just because you're seeing a subset.
 
 Provide:
-- is_valid: Boolean indicating if data meets all requirements
-- confidence_level: 0-100 confidence score
-- explanation: Detailed explanation of your assessment
-- missing_requirements: List specific missing elements if validation fails
-- data_quality_issues: List any data quality problems identified
+- is_valid: Boolean - true if sample demonstrates correct direction and structure
+- confidence_level: 0-100 score based on sample quality and alignment (not completeness)
+- explanation: Focus on whether the sample indicates success for the full dataset
+- missing_requirements: Only list structural/configuration issues visible in the sample
+- data_quality_issues: Only list problems evident in the actual sample data shown
 
-If confidence is below 80, be very specific about what's wrong and what needs to be fixed.
+Remember: You're validating the APPROACH and QUALITY, not the completeness!
 """
 
             # Get validation result from LLM
             validation_result = validation_llm.invoke(validation_prompt)
-            
+
             # Create validation message
             validation_message = f"Confidence: {validation_result.confidence_level}% - {validation_result.explanation}"
-            
+
             # Determine if data should be considered valid (high confidence threshold)
-            data_is_valid = validation_result.is_valid and validation_result.confidence_level >= 80
-            
+            data_is_valid = (
+                validation_result.is_valid and validation_result.confidence_level >= 80
+            )
+
             if data_is_valid:
-                # Mark task as completed if validation passes
+                # Continue to DB operations after validation passes
                 return Command(
                     goto="widget_supervisor",
                     update={
                         "data_validated": True,
                         "data": state.code_execution_result,
-                        "task_status": "completed",
                         "updated_at": datetime.now(),
                         "messages": [
                             ToolMessage(
                                 content=f"✅ Data validation successful! {validation_message}",
-                                tool_call_id="validation_complete"
+                                tool_call_id="validation_complete",
                             )
-                        ]
+                        ],
                     },
                 )
             else:
                 # Build detailed error message for retry
                 error_details = []
                 if validation_result.missing_requirements:
-                    error_details.append(f"Missing requirements: {', '.join(validation_result.missing_requirements)}")
+                    error_details.append(
+                        f"Missing requirements: {', '.join(validation_result.missing_requirements)}"
+                    )
                 if validation_result.data_quality_issues:
-                    error_details.append(f"Data quality issues: {', '.join(validation_result.data_quality_issues)}")
-                
+                    error_details.append(
+                        f"Data quality issues: {', '.join(validation_result.data_quality_issues)}"
+                    )
+
                 detailed_error = f"Validation failed (Confidence: {validation_result.confidence_level}%). {validation_result.explanation}"
                 if error_details:
                     detailed_error += f" Issues: {'; '.join(error_details)}"
-                
+
                 return Command(
                     goto="widget_supervisor",
                     update={
@@ -977,9 +1318,9 @@ If confidence is below 80, be very specific about what's wrong and what needs to
                         "messages": [
                             ToolMessage(
                                 content=f"❌ {validation_message}",
-                                tool_call_id="validation_failed"
+                                tool_call_id="validation_failed",
                             )
-                        ]
+                        ],
                     },
                 )
 
@@ -987,60 +1328,270 @@ If confidence is below 80, be very specific about what's wrong and what needs to
             return Command(
                 goto="widget_supervisor",
                 update={
-                    "error_messages": state.error_messages + [f"Validation error: {str(e)}"],
+                    "error_messages": state.error_messages
+                    + [f"Validation error: {str(e)}"],
                     "data_validated": False,
                     "updated_at": datetime.now(),
                 },
             )
-    
-    def _get_data_sample(self, data):
-        """Extract first 10 rows/items from generated data for validation."""
-        if isinstance(data, list):
-            return data[:10]
-        elif isinstance(data, dict):
-            if 'x' in data and 'y' in data:
-                # Chart data - sample both x and y
-                return {
-                    'x': data['x'][:10] if isinstance(data['x'], list) else data['x'],
-                    'y': data['y'][:10] if isinstance(data['y'], list) else data['y']
+
+    def _get_data_sample(self, chart_config_data):
+        """
+        Extract first 10 records from ChartConfigSchema data for validation.
+
+        Args:
+            chart_config_data: Dictionary following ChartConfigSchema structure
+
+        Returns:
+            Dictionary: Complete ChartConfigSchema structure with sampled data (first 10 records)
+        """
+        if not isinstance(chart_config_data, dict):
+            # Fallback for non-dict data (shouldn't happen with validated schema)
+            return chart_config_data
+
+        # Create a copy of the full schema
+        sampled_result = chart_config_data.copy()
+
+        # Extract and sample the data array
+        if "data" in chart_config_data and isinstance(chart_config_data["data"], list):
+            # Get first 10 records from the data array
+            original_data = chart_config_data["data"]
+            sampled_data = original_data[:10]
+
+            # Update the result with sampled data
+            sampled_result["data"] = sampled_data
+
+            # Add metadata about sampling
+            sampled_result["_sampling_info"] = {
+                "original_count": len(original_data),
+                "sampled_count": len(sampled_data),
+                "is_sampled": len(original_data) > 10,
+            }
+        else:
+            # If data is not a list or doesn't exist, return as-is with warning
+            sampled_result["_sampling_info"] = {
+                "original_count": 0,
+                "sampled_count": 0,
+                "is_sampled": False,
+                "warning": "Data field is not a list or is missing",
+            }
+
+        return sampled_result
+
+    def _analyze_data_structure(self, chart_config_data):
+        """Analyze the structure and types of ChartConfigSchema data."""
+        if not isinstance(chart_config_data, dict):
+            return {
+                "type": type(chart_config_data).__name__,
+                "value": str(chart_config_data)[:100],
+            }
+
+        analysis = {
+            "type": "ChartConfigSchema",
+            "schema_fields": {},
+            "data_analysis": {},
+        }
+
+        # Analyze each schema field
+        schema_fields = [
+            "chartType",
+            "title",
+            "description",
+            "data",
+            "chartConfig",
+            "xAxisConfig",
+        ]
+        for field in schema_fields:
+            if field in chart_config_data:
+                field_value = chart_config_data[field]
+                analysis["schema_fields"][field] = {
+                    "type": type(field_value).__name__,
+                    "present": True,
                 }
-            elif 'categories' in data and 'values' in data:
-                # Bar chart data
-                return {
-                    'categories': data['categories'][:10] if isinstance(data['categories'], list) else data['categories'],
-                    'values': data['values'][:10] if isinstance(data['values'], list) else data['values']
-                }
+
+                # Special analysis for data field
+                if field == "data" and isinstance(field_value, list):
+                    analysis["schema_fields"][field].update(
+                        {
+                            "length": len(field_value),
+                            "sample_keys": list(field_value[0].keys())
+                            if field_value and isinstance(field_value[0], dict)
+                            else None,
+                            "item_type": type(field_value[0]).__name__
+                            if field_value
+                            else "unknown",
+                        }
+                    )
+                # Special analysis for chartConfig
+                elif field == "chartConfig" and isinstance(field_value, dict):
+                    analysis["schema_fields"][field].update(
+                        {
+                            "config_keys": list(field_value.keys()),
+                            "config_count": len(field_value),
+                        }
+                    )
+                # Special analysis for xAxisConfig
+                elif field == "xAxisConfig" and isinstance(field_value, dict):
+                    analysis["schema_fields"][field].update(
+                        {"dataKey": field_value.get("dataKey", "not_specified")}
+                    )
             else:
-                # Generic dict - return first 10 key-value pairs
-                items = list(data.items())[:10]
-                return dict(items)
-        else:
-            return data  # Return as-is for other types
-    
-    def _analyze_data_structure(self, data):
-        """Analyze the structure and types of generated data."""
-        if isinstance(data, list):
-            return {
-                "type": "array",
-                "length": len(data),
-                "item_type": type(data[0]).__name__ if data else "unknown",
-                "sample_keys": list(data[0].keys()) if data and isinstance(data[0], dict) else None
-            }
-        elif isinstance(data, dict):
-            return {
-                "type": "object", 
-                "keys": list(data.keys()),
-                "key_types": {k: type(v).__name__ for k, v in data.items()},
-                "array_lengths": {k: len(v) if isinstance(v, list) else None for k, v in data.items()}
-            }
-        else:
-            return {
-                "type": type(data).__name__,
-                "value": str(data)[:100]  # First 100 chars
-            }
+                analysis["schema_fields"][field] = {"type": "missing", "present": False}
+
+        # Add sampling info if present
+        if "_sampling_info" in chart_config_data:
+            analysis["sampling_info"] = chart_config_data["_sampling_info"]
+
+        return analysis
+
+    def db_operations_node(self, state: WidgetAgentState) -> Command:
+        """
+        Database operations node that handles CREATE/UPDATE/DELETE operations for widgets.
+        Uses create_widget, update_widget, delete_widget from dashboard.py.
+        """
+        try:
+            import uuid
+            from actions.dashboard import create_widget, update_widget, delete_widget
+            from agent.models import CreateWidgetInput, UpdateWidgetInput
+
+            # Extract operation type
+            operation = state.operation
+            
+            # Extract title - for DELETE operations, use state.title directly
+            if operation == "DELETE":
+                title = state.title
+            else:
+                # For CREATE/UPDATE, try to get title from code_execution_result if available
+                title = state.code_execution_result.get("title", state.title) if state.code_execution_result else state.title
+            
+            # Use widget_type from state
+            widget_type = state.widget_type
+            
+            # Use dashboard_id from state
+            dashboard_id = state.dashboard_id
+
+            if operation == "CREATE":
+                # Generate widget_id as "wid_" + uuid() if not already provided
+                widget_id = state.widget_id
+                if not widget_id:
+                    widget_id = f"wid_{str(uuid.uuid4())}"
+                
+                # Create widget input
+                create_input = CreateWidgetInput(
+                    dashboard_id=dashboard_id,
+                    title=title,
+                    widget_type=widget_type,
+                    config=state.code_execution_result or {},  # Pass full code_execution_result as config or empty dict
+                    chat_id=state.chat_id,
+                    description=state.description,
+                    data={"data": state.code_execution_result.get("data", []) if state.code_execution_result else []},  # Wrap data array in dictionary
+                )
+                
+                # Create widget in database
+                created_widget = create_widget(create_input)
+                
+                success_msg = f"✅ DATABASE OPERATION COMPLETE: Successfully created widget '{title}' with ID: {created_widget.id}. The entire widget creation task is now COMPLETED. All data has been processed, validated, and persisted to the database."
+                return Command(
+                    goto="widget_supervisor",
+                    update={
+                        "widget_id": created_widget.id,
+                        "updated_at": datetime.now(),
+                        "widget_creation_completed": True,  # Clear completion signal
+                        "messages": [
+                            ToolMessage(
+                                content=success_msg,
+                                tool_call_id="db_create_complete",
+                            )
+                        ],
+                    },
+                )
+                
+            elif operation == "UPDATE":
+                # Update existing widget
+                update_input = UpdateWidgetInput(
+                    widget_id=state.widget_id,
+                    title=title,
+                    widget_type=widget_type,
+                    config=state.code_execution_result or {},  # Pass full code_execution_result as config or empty dict
+                    chat_id=state.chat_id,
+                    description=state.description,
+                    data={"data": state.code_execution_result.get("data", []) if state.code_execution_result else []},  # Wrap data array in dictionary
+                )
+                
+                # Update widget in database
+                updated_widget = update_widget(update_input)
+                
+                success_msg = f"✅ DATABASE OPERATION COMPLETE: Successfully updated widget '{title}' with ID: {state.widget_id}. The entire widget update task is now COMPLETED. All data has been processed, validated, and persisted to the database."
+                return Command(
+                    goto="widget_supervisor",
+                    update={
+                        "updated_at": datetime.now(),
+                        "widget_update_completed": True,  # Clear completion signal
+                        "messages": [
+                            ToolMessage(
+                                content=success_msg,
+                                tool_call_id="db_update_complete",
+                            )
+                        ],
+                    },
+                )
+                
+            elif operation == "DELETE":
+                # Delete widget from database
+                deletion_success = delete_widget(state.widget_id)
+                
+                if deletion_success:
+                    success_msg = f"✅ DATABASE OPERATION COMPLETE: Successfully deleted widget with ID: {state.widget_id}. The entire widget deletion task is now COMPLETED."
+                    return Command(
+                        goto="widget_supervisor",
+                        update={
+                            "updated_at": datetime.now(),
+                            "widget_deletion_completed": True,  # Clear completion signal
+                            "messages": [
+                                ToolMessage(
+                                    content=success_msg,
+                                    tool_call_id="db_delete_complete",
+                                )
+                            ],
+                        },
+                    )
+                else:
+                    error_msg = f"Failed to delete widget with ID: {state.widget_id} (widget not found)"
+                    return Command(
+                        goto="widget_supervisor",
+                        update={
+                            "error_messages": state.error_messages + [error_msg],
+                            "task_status": "failed",
+                            "updated_at": datetime.now(),
+                        },
+                    )
+            else:
+                # Invalid operation
+                error_msg = f"Invalid operation '{operation}'. Must be CREATE, UPDATE, or DELETE"
+                return Command(
+                    goto="widget_supervisor",
+                    update={
+                        "error_messages": state.error_messages + [error_msg],
+                        "task_status": "failed",
+                        "updated_at": datetime.now(),
+                    },
+                )
+
+        except Exception as e:
+            error_msg = f"Database operations error: {str(e)}"
+            return Command(
+                goto="widget_supervisor",
+                update={
+                    "error_messages": state.error_messages + [error_msg],
+                    "task_status": "failed",
+                    "updated_at": datetime.now(),
+                },
+            )
+
 
 # Create lazy singleton instance
 _worker_nodes_instance = None
+
 
 def get_worker_nodes():
     """Get or create worker nodes instance."""
@@ -1049,22 +1600,31 @@ def get_worker_nodes():
         _worker_nodes_instance = WorkerNodes()
     return _worker_nodes_instance
 
+
 # Export individual node functions for graph usage with lazy initialization
 def data_node(state: WidgetAgentState) -> Command:
     """Lazy wrapper for data_node."""
     return get_worker_nodes().data_node(state)
+
 
 def validate_data_node(state: WidgetAgentState) -> Command:
     """Lazy wrapper for validate_data_node."""
     return get_worker_nodes().validate_data_node(state)
 
 
+def db_operations_node(state: WidgetAgentState) -> Command:
+    """Lazy wrapper for db_operations_node."""
+    return get_worker_nodes().db_operations_node(state)
+
+
 # Export tools
 __all__ = [
-    "fetch_data_tool", 
+    "fetch_data_tool",
     "e2b_sandbox_tool",
     "generate_python_code_tool",
-    "data_node", 
-    "validate_data_node", 
-    "get_worker_nodes"
+    "get_chart_config_schema_string",
+    "data_node",
+    "validate_data_node",
+    "db_operations_node",
+    "get_worker_nodes",
 ]

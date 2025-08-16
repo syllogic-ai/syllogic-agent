@@ -6,7 +6,12 @@ intelligently routes tasks to specialized worker nodes for widget processing.
 
 from __future__ import annotations
 
-from typing import TypedDict, Annotated, Sequence
+import os
+
+# Import reducers directly from utils file to avoid dependency issues
+import sys
+from typing import Annotated, Sequence, TypedDict
+
 from langchain_core.messages import BaseMessage
 from langgraph.graph import START, StateGraph
 from langgraph.graph.message import add_messages
@@ -16,14 +21,13 @@ from agent.agents.widget_agent_team.widget_supervisor import widget_supervisor
 from agent.agents.widget_agent_team.worker_nodes import (
     data_node,
     validate_data_node,
+    db_operations_node,
 )
 from agent.models import WidgetAgentState
-# Import reducers directly from utils file to avoid dependency issues
-import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../actions'))
 
-from utils import take_last, merge_lists
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../actions"))
+
+from utils import merge_lists, take_last
 
 
 class Context(TypedDict):
@@ -38,7 +42,7 @@ class Context(TypedDict):
 
 def build_widget_agent_graph():
     """Builds and compiles the complete widget agent graph."""
-    
+
     # Use WidgetAgentState directly with LangGraph requirements
     class GraphState(WidgetAgentState):
         # Add required LangGraph fields
@@ -54,13 +58,15 @@ def build_widget_agent_graph():
     # Add all worker nodes
     builder.add_node("data", data_node)
     builder.add_node("validate_data", validate_data_node)
+    builder.add_node("db_operations_node", db_operations_node)
 
     # Define edges - START goes to widget_supervisor
     builder.add_edge(START, "widget_supervisor")
-    
+
     # Worker nodes return to supervisor for continued routing
     builder.add_edge("data", "widget_supervisor")
     builder.add_edge("validate_data", "widget_supervisor")
+    builder.add_edge("db_operations_node", "widget_supervisor")
 
     # Compile the graph
     graph = builder.compile(name="Widget Agent System")

@@ -4,12 +4,13 @@ This module initializes and manages shared resources like the Supabase client,
 making them available throughout the application without passing as arguments.
 """
 
-import os
 import logging
+import os
 from typing import Optional
-from supabase import Client, create_client
-from e2b_code_interpreter import Sandbox
+
 from dotenv import load_dotenv
+from e2b_code_interpreter import Sandbox
+from supabase import Client, create_client
 
 # Load environment variables from .env file
 load_dotenv()
@@ -25,37 +26,41 @@ _e2b_api_key: Optional[str] = None
 
 def get_supabase_client() -> Client:
     """Get or create the Supabase client instance.
-    
+
     Returns:
         Client: Initialized Supabase client
-        
+
     Raises:
         ValueError: If required environment variables are not set
         Exception: If client initialization fails
     """
     global _supabase_client
-    
+
     if _supabase_client is not None:
         return _supabase_client
-    
+
     try:
         # Get environment variables
         supabase_url = os.getenv("SUPABASE_URL")
-        
+
         # Try SERVICE_KEY first (preferred for server-side operations), then ANON_KEY
-        supabase_key = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_ANON_KEY")
-        
+        supabase_key = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv(
+            "SUPABASE_ANON_KEY"
+        )
+
         if not supabase_url:
             raise ValueError("SUPABASE_URL environment variable is required")
         if not supabase_key:
-            raise ValueError("Either SUPABASE_SERVICE_KEY or SUPABASE_ANON_KEY environment variable is required")
-        
+            raise ValueError(
+                "Either SUPABASE_SERVICE_KEY or SUPABASE_ANON_KEY environment variable is required"
+            )
+
         # Create client
         _supabase_client = create_client(supabase_url, supabase_key)
-        
+
         logger.info("Supabase client initialized successfully")
         return _supabase_client
-        
+
     except Exception as e:
         logger.error(f"Failed to initialize Supabase client: {str(e)}")
         raise
@@ -63,7 +68,7 @@ def get_supabase_client() -> Client:
 
 def reset_supabase_client():
     """Reset the global Supabase client instance.
-    
+
     Useful for testing or when credentials change.
     """
     global _supabase_client
@@ -73,30 +78,30 @@ def reset_supabase_client():
 
 def get_e2b_api_key() -> str:
     """Get E2B API key from environment variables.
-    
+
     Returns:
         str: E2B API key
-        
+
     Raises:
         ValueError: If E2B_API_KEY environment variable is not set
     """
     global _e2b_api_key
-    
+
     if _e2b_api_key is not None:
         return _e2b_api_key
-    
+
     try:
         # Get E2B API key from environment
         # Try E2B_SANDBOX_API_KEY (user's setup)
         api_key = os.getenv("E2B_SANDBOX_API_KEY")
-        
+
         if not api_key:
             raise ValueError("E2B_SANDBOX_API_KEY environment variable is required")
-        
+
         _e2b_api_key = api_key
         logger.info("E2B API key loaded successfully")
         return _e2b_api_key
-        
+
     except Exception as e:
         logger.error(f"Failed to load E2B API key: {str(e)}")
         raise
@@ -104,23 +109,23 @@ def get_e2b_api_key() -> str:
 
 def create_e2b_sandbox() -> Sandbox:
     """Create a new E2B Sandbox instance.
-    
+
     Returns:
         Sandbox: New E2B Sandbox instance
-        
+
     Raises:
         ValueError: If E2B API key is not available
         Exception: If sandbox creation fails
     """
     try:
         api_key = get_e2b_api_key()
-        
+
         # Create Sandbox with API key
         sandbox = Sandbox(api_key=api_key)
-        
+
         logger.info("E2B Sandbox created successfully")
         return sandbox
-        
+
     except Exception as e:
         logger.error(f"Failed to create E2B Sandbox: {str(e)}")
         raise
@@ -128,7 +133,7 @@ def create_e2b_sandbox() -> Sandbox:
 
 def reset_e2b_config():
     """Reset the global E2B configuration.
-    
+
     Useful for testing or when credentials change.
     """
     global _e2b_api_key
@@ -152,4 +157,10 @@ except Exception as e:
 
 
 # Export public functions
-__all__ = ["get_supabase_client", "reset_supabase_client", "get_e2b_api_key", "create_e2b_sandbox", "reset_e2b_config"]
+__all__ = [
+    "get_supabase_client",
+    "reset_supabase_client",
+    "get_e2b_api_key",
+    "create_e2b_sandbox",
+    "reset_e2b_config",
+]

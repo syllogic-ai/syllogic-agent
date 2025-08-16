@@ -14,6 +14,7 @@ class WidgetAgentRunner:
     def __init__(self):
         # Import graph here to avoid circular imports during module loading
         from agent.graph import graph
+
         self.graph = graph
 
     async def process_widget_task(

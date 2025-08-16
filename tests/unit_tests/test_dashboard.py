@@ -35,13 +35,17 @@ class TestGetDataFromFile:
     @patch("actions.dashboard.get_supabase_client")
     @patch.dict(os.environ, {"SUPABASE_URL": "https://test.supabase.co"})
     def test_get_data_csv_success(
-        self, mock_get_supabase_client, mock_requests, sample_file_data, sample_csv_content
+        self,
+        mock_get_supabase_client,
+        mock_requests,
+        sample_file_data,
+        sample_csv_content,
     ):
         """Test successfully getting data from CSV file."""
         # Mock Supabase client
         mock_supabase = Mock()
         mock_get_supabase_client.return_value = mock_supabase
-        
+
         # Mock database response
         mock_result = Mock()
         mock_result.data = sample_file_data
@@ -65,7 +69,7 @@ class TestGetDataFromFile:
         """Test error when file is not found in database."""
         mock_supabase = Mock()
         mock_get_supabase_client.return_value = mock_supabase
-        
+
         mock_result = Mock()
         mock_result.data = None
         mock_supabase.table().select().eq().single().execute.return_value = mock_result
@@ -75,11 +79,13 @@ class TestGetDataFromFile:
 
     @patch("actions.dashboard.get_supabase_client")
     @patch.dict(os.environ, {}, clear=True)
-    def test_get_data_missing_env_vars(self, mock_get_supabase_client, sample_file_data):
+    def test_get_data_missing_env_vars(
+        self, mock_get_supabase_client, sample_file_data
+    ):
         """Test error when environment variables are missing."""
         mock_supabase = Mock()
         mock_get_supabase_client.return_value = mock_supabase
-        
+
         mock_result = Mock()
         mock_result.data = sample_file_data
         mock_supabase.table().select().eq().single().execute.return_value = mock_result
@@ -93,11 +99,13 @@ class TestGetDataFromFile:
     @patch("requests.get")
     @patch("actions.dashboard.get_supabase_client")
     @patch.dict(os.environ, {"SUPABASE_URL": "https://test.supabase.co"})
-    def test_get_data_http_error(self, mock_get_supabase_client, mock_requests, sample_file_data):
+    def test_get_data_http_error(
+        self, mock_get_supabase_client, mock_requests, sample_file_data
+    ):
         """Test error when HTTP request fails."""
         mock_supabase = Mock()
         mock_get_supabase_client.return_value = mock_supabase
-        
+
         mock_result = Mock()
         mock_result.data = sample_file_data
         mock_supabase.table().select().eq().single().execute.return_value = mock_result
@@ -197,7 +205,9 @@ class TestCreateWidget:
 
     @patch("uuid.uuid4")
     @patch("actions.dashboard.get_supabase_client")
-    def test_create_widget_success(self, mock_get_supabase_client, mock_uuid, sample_widget_data):
+    def test_create_widget_success(
+        self, mock_get_supabase_client, mock_uuid, sample_widget_data
+    ):
         """Test successfully creating a widget."""
         mock_uuid.return_value = "widget-123"
         mock_supabase = Mock()
@@ -226,11 +236,13 @@ class TestCreateWidget:
         assert insert_call["config"] == {"chart_type": "bar"}
 
     @patch("actions.dashboard.get_supabase_client")
-    def test_create_widget_with_optional_fields(self, mock_get_supabase_client, sample_widget_data):
+    def test_create_widget_with_optional_fields(
+        self, mock_get_supabase_client, sample_widget_data
+    ):
         """Test creating widget with optional fields."""
         mock_supabase = Mock()
         mock_get_supabase_client.return_value = mock_supabase
-        
+
         mock_result = Mock()
         mock_result.data = [sample_widget_data]
         mock_supabase.table().insert().execute.return_value = mock_result
@@ -260,7 +272,7 @@ class TestCreateWidget:
         """Test error when widget insert fails."""
         mock_supabase = Mock()
         mock_get_supabase_client.return_value = mock_supabase
-        
+
         mock_result = Mock()
         mock_result.data = None
         mock_supabase.table().insert().execute.return_value = mock_result
@@ -280,7 +292,7 @@ class TestUpdateWidget:
         """Test successfully updating a widget."""
         mock_supabase = Mock()
         mock_get_supabase_client.return_value = mock_supabase
-        
+
         mock_result = Mock()
         mock_result.data = [sample_widget_data]
         mock_supabase.table().update().eq().execute.return_value = mock_result
@@ -304,7 +316,7 @@ class TestUpdateWidget:
         """Test updating widget that doesn't exist."""
         mock_supabase = Mock()
         mock_get_supabase_client.return_value = mock_supabase
-        
+
         mock_result = Mock()
         mock_result.data = None
         mock_supabase.table().update().eq().execute.return_value = mock_result
@@ -324,7 +336,7 @@ class TestDeleteWidget:
         """Test successfully deleting a widget."""
         mock_supabase = Mock()
         mock_get_supabase_client.return_value = mock_supabase
-        
+
         mock_result = Mock()
         mock_result.data = [{"id": "widget-123"}]
         mock_supabase.table().delete().eq().execute.return_value = mock_result
@@ -338,7 +350,7 @@ class TestDeleteWidget:
         """Test deleting widget that doesn't exist."""
         mock_supabase = Mock()
         mock_get_supabase_client.return_value = mock_supabase
-        
+
         mock_result = Mock()
         mock_result.data = None
         mock_supabase.table().delete().eq().execute.return_value = mock_result
@@ -353,11 +365,13 @@ class TestGetWidgetSpecs:
 
     @patch("actions.dashboard.get_supabase_client")
     @pytest.mark.asyncio
-    async def test_get_widget_specs_success(self, mock_get_supabase_client, sample_widget_data):
+    async def test_get_widget_specs_success(
+        self, mock_get_supabase_client, sample_widget_data
+    ):
         """Test successfully getting widget specifications."""
         mock_supabase = Mock()
         mock_get_supabase_client.return_value = mock_supabase
-        
+
         mock_result = Mock()
         mock_result.data = sample_widget_data
         mock_supabase.table().select().eq().single().execute.return_value = mock_result
@@ -377,7 +391,7 @@ class TestGetWidgetSpecs:
         """Test error when widget is not found."""
         mock_supabase = Mock()
         mock_get_supabase_client.return_value = mock_supabase
-        
+
         mock_result = Mock()
         mock_result.data = None
         mock_supabase.table().select().eq().single().execute.return_value = mock_result
@@ -394,7 +408,7 @@ class TestGetWidgetsFromDashboardId:
         """Test successfully getting widgets from dashboard ID."""
         mock_supabase = Mock()
         mock_get_supabase_client.return_value = mock_supabase
-        
+
         mock_result = Mock()
         mock_result.data = [sample_widget_data, sample_widget_data]
         mock_supabase.table().select().eq().execute.return_value = mock_result
@@ -419,7 +433,7 @@ class TestGetWidgetsFromDashboardId:
         """Test getting widgets when none exist for dashboard."""
         mock_supabase = Mock()
         mock_get_supabase_client.return_value = mock_supabase
-        
+
         mock_result = Mock()
         mock_result.data = None
         mock_supabase.table().select().eq().execute.return_value = mock_result
@@ -438,7 +452,7 @@ class TestGetWidgetFromWidgetId:
         """Test successfully getting widget by widget ID."""
         mock_supabase = Mock()
         mock_get_supabase_client.return_value = mock_supabase
-        
+
         mock_result = Mock()
         mock_result.data = sample_widget_data
         mock_supabase.table().select().eq().single().execute.return_value = mock_result
@@ -461,7 +475,7 @@ class TestGetWidgetFromWidgetId:
         """Test getting widget that doesn't exist."""
         mock_supabase = Mock()
         mock_get_supabase_client.return_value = mock_supabase
-        
+
         mock_result = Mock()
         mock_result.data = None
         mock_supabase.table().select().eq().single().execute.return_value = mock_result
