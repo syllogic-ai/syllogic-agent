@@ -23,14 +23,26 @@ class WidgetSupervisor:
         """Analyze the current state comprehensively, filtering large fields intelligently."""
         # Collect handoff messages from recent node executions
         handoff_messages = []
-        if hasattr(state, 'messages') and state.messages:
+        
+        # Try to get messages - state might be GraphState at runtime with messages field
+        messages = getattr(state, 'messages', [])
+        if messages:
             # Extract the last few tool messages as handoff messages
-            recent_messages = state.messages[-5:] if len(state.messages) > 5 else state.messages
+            recent_messages = messages[-5:] if len(messages) > 5 else messages
             for msg in recent_messages:
+                # Check if it's a tool message (from node executions)
                 if hasattr(msg, 'type') and msg.type == 'tool':
                     handoff_messages.append({
                         "tool_call_id": getattr(msg, 'tool_call_id', 'unknown'),
-                        "content": msg.content[:200] + "..." if len(str(msg.content)) > 200 else str(msg.content)
+                        "content": msg.content[:200] + "..." if len(str(msg.content)) > 200 else str(msg.content),
+                        "message_type": "tool"
+                    })
+                # Also include any other relevant message types for context
+                elif hasattr(msg, 'type'):
+                    handoff_messages.append({
+                        "tool_call_id": getattr(msg, 'tool_call_id', 'none'),
+                        "content": str(msg.content)[:200] + "..." if len(str(msg.content)) > 200 else str(msg.content),
+                        "message_type": msg.type
                     })
         
         analysis = {
@@ -82,8 +94,6 @@ class WidgetSupervisor:
         return f"""
 You are an intelligent supervisor managing a widget data processing and database persistence pipeline. 
 
-CURRENT STATE ANALYSIS:
-{json.dumps(state_analysis, indent=2)}
 
 AVAILABLE NODES AND THEIR FUNCTIONS:
 1. "data" - Unified data processing node that:
@@ -97,12 +107,15 @@ AVAILABLE NODES AND THEIR FUNCTIONS:
    - Provides confidence scoring (0-100%)
    - Gives detailed feedback for improvements if validation fails
    - Continues workflow to database operations if validation succeeds
+   - Never go to this node if we have concluded with the database operations node.
 
 3. "db_operations_node" - Database persistence node that:
    - Handles CREATE/UPDATE/DELETE operations for widgets
    - Uses create_widget, update_widget, delete_widget from dashboard.py
    - Persists validated data to the database
    - Marks task as completed after successful database operation
+   - If the operation is DELETE, you go to the database operations node immediately.
+   - After the database operations node, you should end the workflow.
 
 4. "__end__" - Workflow termination:
    - Ends the workflow completely
@@ -126,9 +139,11 @@ IMPORTANT GUIDELINES:
 
 COMPLETION SIGNALS - When to choose "end":
 - If task_progress shows db_create_completed=true, db_update_completed=true, or db_delete_completed=true
-- If handoff messages contain "DATABASE OPERATION COMPLETE" or "task is now COMPLETED"
-- If all required steps are done: data processing → validation → database operations
-- Database operation completion means the ENTIRE TASK IS FINISHED
+- if you get a successfull message from the database operations node, you should end the workflow.
+- Database operation completion means the ENTIRE TASK IS FINISHED.
+
+CURRENT STATE ANALYSIS:
+{json.dumps(state_analysis, indent=2)}
 
 Analyze the situation and make an intelligent routing decision with clear reasoning about why this next step makes sense for achieving the user's goal.
 """
