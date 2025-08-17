@@ -52,21 +52,21 @@ def build_widget_agent_graph():
     # Initialize the graph with WidgetAgentState
     builder = StateGraph(GraphState)
 
-    # Add the widget_supervisor node
+    # Add the widget_supervisor node with possible destinations
     builder.add_node("widget_supervisor", widget_supervisor)
 
-    # Add all worker nodes
+    # Add worker nodes that can route back to supervisor or END
+    # Each worker node uses Command pattern to control its own routing
     builder.add_node("data", data_node)
     builder.add_node("validate_data", validate_data_node)
     builder.add_node("db_operations_node", db_operations_node)
 
-    # Define edges - START goes to widget_supervisor
+    # Define entry point - START goes to widget_supervisor
     builder.add_edge(START, "widget_supervisor")
 
-    # Worker nodes return to supervisor for continued routing
-    builder.add_edge("data", "widget_supervisor")
-    builder.add_edge("validate_data", "widget_supervisor")
-    builder.add_edge("db_operations_node", "widget_supervisor")
+    # No hardcoded edges between worker nodes and supervisor
+    # Worker nodes use Command objects to dynamically route back to supervisor
+    # This follows LangGraph best practices where nodes control their own routing
 
     # Compile the graph
     graph = builder.compile(name="Widget Agent System")
