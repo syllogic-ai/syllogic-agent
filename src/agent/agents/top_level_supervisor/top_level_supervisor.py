@@ -6,7 +6,7 @@ analyzes user requests, reads available data, and delegates appropriate tasks.
 
 import logging
 from datetime import datetime
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage, AIMessage
@@ -16,17 +16,20 @@ from typing_extensions import Annotated
 from agent.models import TopLevelSupervisorState, WidgetAgentState
 from .tools.data_reader import get_available_data
 from .tools.task_manager import create_task, update_task_status, get_pending_tasks
+from .structured_output import SupervisorResponse, TaskCreationPlan, SupervisorDecision
 
 logger = logging.getLogger(__name__)
 
 
 @tool
 def analyze_available_data(
-    dashboard_id: str,
     state: Annotated[TopLevelSupervisorState, InjectedState]
 ) -> str:
-    """Analyze what data is available for the given dashboard."""
+    """Analyze what data is available for the dashboard."""
     try:
+        # Get dashboard_id from state
+        dashboard_id = state.dashboard_id
+        
         data_info = get_available_data(dashboard_id)
         
         # Update state with available data
@@ -48,7 +51,8 @@ def delegate_widget_task(
     title: str,
     description: str,
     file_ids: List[str],
-    state: Annotated[TopLevelSupervisorState, InjectedState]
+    state: Annotated[TopLevelSupervisorState, InjectedState],
+    widget_id: Optional[str] = None
 ) -> str:
     """Delegate a widget-related task to the widget_agent_team.
     
@@ -59,6 +63,7 @@ def delegate_widget_task(
         title: Widget title
         description: Widget description
         file_ids: List of file IDs to use for the widget
+        widget_id: Widget ID for UPDATE/DELETE operations or context reference
     """
     try:
         # Prepare WidgetAgentState initialization data
@@ -74,12 +79,19 @@ def delegate_widget_task(
             "file_ids": file_ids
         }
         
+        # Add widget_id if provided
+        if widget_id:
+            widget_agent_state_data["widget_id"] = widget_id
+        
         # Create and add the task
         state = create_task(
             state=state,
-            task_type="widget_operation",
             target_agent="widget_agent_team",
             task_instructions=task_instructions,
+            widget_type=widget_type,
+            operation=operation,
+            file_ids=file_ids,
+            widget_id=widget_id,
             widget_agent_state_data=widget_agent_state_data
         )
         
@@ -125,6 +137,41 @@ def check_task_status(
 
 
 @tool
+def execute_widget_tasks(
+    state: Annotated[TopLevelSupervisorState, InjectedState]
+) -> str:
+    """Execute pending widget tasks by delegating to widget_agent_team."""
+    try:
+        from langgraph.types import Command
+        
+        # Find pending widget tasks
+        pending_tasks = [
+            task for task in state.delegated_tasks 
+            if task.target_agent == "widget_agent_team" and task.task_status == "pending"
+        ]
+        
+        if not pending_tasks:
+            return "No pending widget tasks to execute"
+        
+        # Mark the first task as in_progress
+        current_task = pending_tasks[0]
+        current_task.task_status = "in_progress"
+        current_task.started_at = datetime.now()
+        
+        state.current_reasoning = f"Executing widget task: {current_task.task_instructions}"
+        state.updated_at = datetime.now()
+        
+        logger.info(f"Executing task {current_task.task_id} with widget_agent_team")
+        
+        # This will signal to the graph to route to widget_agent_team
+        return f"DELEGATE_TO_WIDGET_TEAM: {current_task.task_id}"
+        
+    except Exception as e:
+        logger.error(f"Error executing widget tasks: {e}")
+        return f"Error executing widget tasks: {str(e)}"
+
+
+@tool
 def finalize_response(
     final_message: str,
     state: Annotated[TopLevelSupervisorState, InjectedState]
@@ -147,48 +194,82 @@ def finalize_response(
 supervisor_tools = [
     analyze_available_data,
     delegate_widget_task,
+    execute_widget_tasks,
     check_task_status,
     finalize_response
 ]
 
-# Create the supervisor agent using create_react_agent
-def create_top_level_supervisor(model_name: str = "anthropic:claude-3-5-sonnet-latest"):
-    """Create the top-level supervisor agent."""
+# Create the supervisor agent using create_react_agent with structured output
+def create_top_level_supervisor(model_name: str = "openai:gpt-4o-mini"):
+    """Create the top-level supervisor agent with structured output."""
     
     system_prompt = """You are the Top Level Supervisor for a dashboard and widget management system.
 
 Your responsibilities:
 1. Analyze user requests and understand what they want to accomplish
 2. Read and understand available data sources 
-3. Break down complex requests into specific tasks
-4. Delegate appropriate tasks to specialized agent teams
+3. Strategically plan widget creation to comprehensively answer the user's needs
+4. Delegate complementary tasks that work together to fulfill the request
 5. Monitor task progress and coordinate between teams
-6. Provide final responses when all tasks are completed
+6. Provide structured responses about your progress and decisions
 
 Available Agent Teams:
 - widget_agent_team: Handles widget creation, updates, and deletion operations
 
+CRITICAL TASK PLANNING RULES:
+1. NEVER create duplicate or redundant tasks
+2. Tasks must complement each other to provide a complete answer
+3. For specific requests (e.g., "create a bar chart"), create exactly what was asked
+4. For vague requests, think strategically about what widgets would best answer the user's question
+
+WIDGET STRATEGY GUIDELINES:
+- Single chart request: Create exactly one widget as requested
+- Exploratory questions: Consider multiple complementary widgets (e.g., overview + drill-down)
+- Dashboard requests: Plan 3-5 widgets that tell a complete story
+- Update/delete requests: Use context_widget_ids to identify target widgets
+
+STRUCTURED OUTPUT REQUIREMENT:
+You MUST always provide responses in the specified structured format. Your response should include:
+- Current status (analyzing, planning, delegating, monitoring, completed, failed)
+- Clear human-readable message about what you're doing
+- Specific decision details when planning
+- Task creation plans when delegating
+- Summary of progress when monitoring
+
 When you receive a user request:
 1. FIRST: Use analyze_available_data to understand what data is available
-2. THEN: Analyze the user prompt to determine what tasks need to be completed
-3. DELEGATE: Use delegate_widget_task for any widget-related operations
-4. MONITOR: Use check_task_status to track progress
-5. FINALIZE: Use finalize_response when all tasks are completed
+2. THEN: Analyze the user prompt and plan your widget strategy:
+   - What is the user really trying to understand?
+   - What widgets would best answer their question?
+   - How can widgets complement each other?
+3. CHECK: Review any existing delegated tasks to avoid duplicates
+4. DELEGATE: Use delegate_widget_task for each unique widget needed
+5. MONITOR: Use check_task_status to track progress
+6. RESPOND: Always provide structured output about your decisions and progress
 
-For widget operations, you must specify:
+For each widget operation, you must specify:
 - operation: CREATE, UPDATE, or DELETE
-- widget_type: line, bar, pie, area, radial, kpi, or table
-- title: Clear widget title
-- description: Widget description
+- widget_type: line, bar, pie, area, radial, kpi, or table (choose based on data and purpose)
+- title: Clear, specific widget title that indicates its purpose
+- description: Widget description explaining what insights it provides
 - file_ids: List of relevant file IDs from available data
+- widget_id: Required for UPDATE/DELETE operations (use context_widget_ids)
 
-Always be thorough in your analysis and clear in your task delegation. 
-Ensure all necessary information is provided to the specialized agents."""
+SMART DELEGATION EXAMPLES:
+- "Show me sales trends" → 1 line chart of sales over time
+- "Analyze our performance" → Multiple widgets: KPI summary, trends chart, breakdown by category
+- "Update the revenue chart" → 1 UPDATE operation using provided widget_id
+- "What's our best selling product?" → Bar chart + KPI widget for comprehensive answer
+
+Always think before delegating: Does this task complement my existing tasks? Am I avoiding duplicates? Will these widgets together answer the user's question completely?
+
+IMPORTANT: Always respond with the structured SupervisorResponse format providing clear status, message, and relevant details."""
 
     return create_react_agent(
         model=model_name,
         tools=supervisor_tools,
-        prompt=system_prompt
+        prompt=system_prompt,
+        response_format=SupervisorResponse
     )
 
 
@@ -216,29 +297,61 @@ Start by analyzing the available data, then determine what needs to be done.
 """
         )
         
-        # Invoke the supervisor agent
-        result = supervisor_agent.invoke({
-            "messages": [user_message]
-        })
+        # Invoke the supervisor agent with complete state
+        agent_input = {
+            "messages": [user_message],
+            # Pass through all the required state fields for tool injection
+            "user_prompt": state.user_prompt,
+            "user_id": state.user_id,
+            "dashboard_id": state.dashboard_id, 
+            "chat_id": state.chat_id,
+            "request_id": state.request_id,
+            "file_ids": state.file_ids,
+            "context_widget_ids": state.context_widget_ids,
+            "available_files": state.available_files,
+            "available_data_summary": state.available_data_summary,
+            "delegated_tasks": state.delegated_tasks,
+            "supervisor_status": state.supervisor_status,
+            "current_reasoning": state.current_reasoning,
+            "final_response": state.final_response,
+            "error_messages": state.error_messages,
+            "created_at": state.created_at,
+            "updated_at": state.updated_at,
+            "all_tasks_completed": state.all_tasks_completed
+        }
         
-        # Extract the response
-        if result and "messages" in result:
+        result = supervisor_agent.invoke(agent_input)
+        
+        # Extract structured response
+        structured_response = None
+        response_content = "Task analysis completed"
+        
+        if result and "structured_response" in result:
+            structured_response = result["structured_response"]
+            response_content = structured_response.message
+            
+            # Update supervisor status based on structured response
+            if structured_response.status in ["analyzing", "planning", "delegating", "monitoring", "completed", "failed"]:
+                state.supervisor_status = structured_response.status
+                
+        elif result and "messages" in result:
+            # Fallback to message content if no structured response
             last_message = result["messages"][-1]
             if isinstance(last_message, AIMessage):
                 response_content = last_message.content
             else:
                 response_content = str(last_message)
-        else:
-            response_content = "Task analysis completed"
         
         # Update state
         state.current_reasoning = response_content
         state.updated_at = datetime.now()
         
+        # Return both regular state updates and structured response for external use
         return {
             "current_reasoning": response_content,
             "supervisor_status": state.supervisor_status,
-            "updated_at": state.updated_at
+            "updated_at": state.updated_at,
+            "structured_response": structured_response
         }
         
     except Exception as e:

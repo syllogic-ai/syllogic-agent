@@ -21,7 +21,7 @@ class TopLevelSupervisorRunner:
     request processing through task delegation and completion tracking.
     """
     
-    def __init__(self, model_name: str = "anthropic:claude-3-5-sonnet-latest"):
+    def __init__(self, model_name: str = "openai:gpt-4o-mini"):
         """Initialize the supervisor runner.
         
         Args:
@@ -46,6 +46,8 @@ class TopLevelSupervisorRunner:
                 dashboard_id=payload.dashboard_id,
                 chat_id=payload.chat_id,
                 request_id=payload.request_id,
+                file_ids=payload.file_ids,
+                context_widget_ids=payload.context_widget_ids,
                 supervisor_status="analyzing",
                 created_at=datetime.now()
             )
@@ -75,10 +77,16 @@ class TopLevelSupervisorRunner:
             # Run the supervisor agent
             updates = top_level_supervisor(state)
             
-            # Apply updates to state
+            # Apply updates to state and store structured response
+            structured_response = updates.get("structured_response")
             for key, value in updates.items():
-                if hasattr(state, key):
+                if key != "structured_response" and hasattr(state, key):
                     setattr(state, key, value)
+            
+            # Store the structured response for later use (as a simple attribute)
+            # Note: Since TopLevelSupervisorState is a Pydantic model, we store as a dict
+            if structured_response:
+                state._latest_structured_response = structured_response
             
             logger.info(f"Completed supervisor cycle. Status: {state.supervisor_status}")
             return state
@@ -180,12 +188,15 @@ class TopLevelSupervisorRunner:
             state = self.create_initial_state(payload)
             
             # Run initial supervisor analysis and delegation
-            state = self.run_supervisor_cycle(state)
+            cycle_result = self.run_supervisor_cycle(state)
             
             # Monitor and coordinate until completion
             state = self.monitor_and_coordinate(state, max_coordination_iterations)
             
-            # Prepare result
+            # Get the latest structured response from the supervisor cycle  
+            latest_structured_response = getattr(state, '_latest_structured_response', None)
+            
+            # Prepare result with structured output
             result = {
                 "request_id": state.request_id,
                 "status": state.supervisor_status,
@@ -193,17 +204,20 @@ class TopLevelSupervisorRunner:
                 "delegated_tasks": [
                     {
                         "task_id": task.task_id,
-                        "task_type": task.task_type,
                         "target_agent": task.target_agent,
+                        "widget_type": task.widget_type,
+                        "operation": task.operation,
                         "status": task.task_status,
-                        "instructions": task.task_instructions
+                        "instructions": task.task_instructions,
+                        "result": task.result
                     }
                     for task in state.delegated_tasks
                 ],
                 "available_data_summary": state.available_data_summary,
                 "error_messages": state.error_messages,
                 "created_at": state.created_at.isoformat(),
-                "updated_at": state.updated_at.isoformat() if state.updated_at else None
+                "updated_at": state.updated_at.isoformat() if state.updated_at else None,
+                "structured_response": latest_structured_response.model_dump() if latest_structured_response else None
             }
             
             logger.info(f"Completed request execution: {payload.request_id}")

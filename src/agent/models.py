@@ -56,6 +56,9 @@ class BackendPayload(BaseModel):
     context_widget_ids: Optional[List[str]] = Field(
         default=None, description="Existing widgets user is referencing"
     )
+    file_ids: List[str] = Field(
+        default_factory=list, description="File IDs available for widget creation"
+    )
     chat_id: str = Field(description="For conversation continuity")
     request_id: str = Field(description="For logging/tracking")
     user_id: str = Field(description="For personalization")
@@ -390,9 +393,6 @@ class DelegatedTask(BaseModel):
     """A task that has been delegated to a specialized agent team."""
     
     task_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    task_type: Literal["widget_operation", "data_analysis", "reporting"] = Field(
-        description="Type of task to be handled by specialized agents"
-    )
     target_agent: Literal["widget_agent_team"] = Field(
         description="Which agent team should handle this task"
     )
@@ -401,13 +401,27 @@ class DelegatedTask(BaseModel):
         default="pending"
     )
     
+    # Widget-specific task data
+    widget_type: Literal["line", "bar", "pie", "area", "radial", "kpi", "table"] = Field(
+        description="Type of widget to create/update/delete"
+    )
+    operation: Literal["CREATE", "UPDATE", "DELETE"] = Field(
+        description="Widget operation to perform"
+    )
+    file_ids: List[str] = Field(
+        default_factory=list, description="File IDs to use for the widget"
+    )
+    widget_id: Optional[str] = Field(
+        default=None, description="Widget ID for UPDATE/DELETE operations or context reference"
+    )
+    
     # Task data for initialization
     widget_agent_state_data: Optional[Dict[str, Any]] = Field(
         default=None, description="Data needed to initialize WidgetAgentState"
     )
     
     # Task results
-    result: Optional[Dict[str, Any]] = Field(default=None, description="Task result data")
+    result: Optional[str] = Field(default=None, description="Task result summary message")
     error_message: Optional[str] = Field(default=None, description="Error if task failed")
     
     # Timestamps
@@ -425,6 +439,12 @@ class TopLevelSupervisorState(BaseModel):
     dashboard_id: str = Field(description="Dashboard context for the request")
     chat_id: str = Field(description="Chat ID for conversation continuity")
     request_id: str = Field(description="Unique identifier for this request")
+    
+    # Context from backend payload
+    file_ids: List[str] = Field(default_factory=list, description="File IDs from backend payload")
+    context_widget_ids: Optional[List[str]] = Field(
+        default=None, description="Existing widgets user is referencing"
+    )
     
     # Available data context
     available_files: List[str] = Field(default_factory=list, description="List of available file IDs")

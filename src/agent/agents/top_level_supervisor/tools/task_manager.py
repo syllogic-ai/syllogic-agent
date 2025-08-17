@@ -2,7 +2,7 @@
 
 import logging
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 from agent.models import DelegatedTask, TopLevelSupervisorState
 
@@ -11,18 +11,24 @@ logger = logging.getLogger(__name__)
 
 def create_task(
     state: TopLevelSupervisorState,
-    task_type: str,
     target_agent: str,
     task_instructions: str,
+    widget_type: str,
+    operation: str,
+    file_ids: List[str],
+    widget_id: Optional[str] = None,
     widget_agent_state_data: Optional[Dict[str, Any]] = None
 ) -> TopLevelSupervisorState:
     """Create a new delegated task and add it to the state.
     
     Args:
         state: Current supervisor state
-        task_type: Type of task (widget_operation, data_analysis, reporting)
         target_agent: Which agent team should handle this (widget_agent_team)
         task_instructions: Detailed instructions for the task
+        widget_type: Type of widget to create/update/delete
+        operation: Widget operation (CREATE, UPDATE, DELETE)
+        file_ids: File IDs to use for the widget
+        widget_id: Widget ID for UPDATE/DELETE operations or context reference
         widget_agent_state_data: Data needed to initialize WidgetAgentState
         
     Returns:
@@ -30,9 +36,12 @@ def create_task(
     """
     try:
         new_task = DelegatedTask(
-            task_type=task_type,
             target_agent=target_agent,
             task_instructions=task_instructions,
+            widget_type=widget_type,
+            operation=operation,
+            file_ids=file_ids,
+            widget_id=widget_id,
             widget_agent_state_data=widget_agent_state_data,
             created_at=datetime.now()
         )
@@ -45,7 +54,7 @@ def create_task(
         state.delegated_tasks = updated_tasks
         state.updated_at = datetime.now()
         
-        logger.info(f"Created new task {new_task.task_id} of type {task_type} for {target_agent}")
+        logger.info(f"Created new task {new_task.task_id} for {target_agent}: {operation} {widget_type} widget")
         
         return state
         
@@ -59,7 +68,7 @@ def update_task_status(
     state: TopLevelSupervisorState,
     task_id: str,
     new_status: str,
-    result: Optional[Dict[str, Any]] = None,
+    result: Optional[str] = None,
     error_message: Optional[str] = None
 ) -> TopLevelSupervisorState:
     """Update the status of a delegated task.
@@ -68,7 +77,7 @@ def update_task_status(
         state: Current supervisor state
         task_id: ID of the task to update
         new_status: New status (pending, in_progress, completed, failed)
-        result: Task result data if completed
+        result: Task result summary message if completed
         error_message: Error message if failed
         
     Returns:
@@ -156,3 +165,46 @@ def get_failed_tasks(state: TopLevelSupervisorState) -> list[DelegatedTask]:
         List of failed tasks
     """
     return [task for task in state.delegated_tasks if task.task_status == "failed"]
+
+
+def delegate_to_widget_team(state: TopLevelSupervisorState) -> str:
+    """Delegate a pending widget task to the widget_agent_team.
+    
+    This function identifies the next pending widget task and prepares
+    for delegation to the widget_agent_team node.
+    
+    Args:
+        state: Current supervisor state
+        
+    Returns:
+        "widget_agent_team" to route to the widget team node, or status message
+    """
+    try:
+        # Find pending widget tasks
+        pending_widget_tasks = [
+            task for task in state.delegated_tasks 
+            if task.target_agent == "widget_agent_team" and task.task_status == "pending"
+        ]
+        
+        if not pending_widget_tasks:
+            logger.info("No pending widget tasks found for delegation")
+            return "No pending widget tasks to delegate"
+        
+        # Mark the first task as in_progress
+        current_task = pending_widget_tasks[0]
+        current_task.task_status = "in_progress"
+        current_task.started_at = datetime.now()
+        
+        state.current_reasoning = f"Delegating widget task: {current_task.task_instructions}"
+        state.updated_at = datetime.now()
+        
+        logger.info(f"Delegating task {current_task.task_id} to widget_agent_team")
+        
+        # Return the node name to route to
+        return "widget_agent_team"
+        
+    except Exception as e:
+        error_msg = f"Error delegating to widget team: {str(e)}"
+        logger.error(error_msg)
+        state.error_messages.append(error_msg)
+        return f"Delegation failed: {str(e)}"

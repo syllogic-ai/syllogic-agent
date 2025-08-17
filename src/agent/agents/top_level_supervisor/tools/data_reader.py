@@ -3,8 +3,7 @@
 import logging
 from typing import Dict, List
 
-from config import get_supabase_client
-from actions.dashboard import get_schema_from_file, get_sample_from_file
+from actions.utils import import_config, import_actions_dashboard
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +18,11 @@ def get_available_data(dashboard_id: str) -> Dict[str, any]:
         Dict containing available files, schemas, and summary
     """
     try:
-        supabase = get_supabase_client()
+        # Import config and dashboard functions using robust import
+        config_module = import_config()
+        actions_dashboard = import_actions_dashboard()
+        
+        supabase = config_module.get_supabase_client()
         
         # Get all files associated with this dashboard
         response = (
@@ -46,7 +49,7 @@ def get_available_data(dashboard_id: str) -> Dict[str, any]:
             
             try:
                 # Get schema for this file
-                schema = get_schema_from_file(file_id)
+                schema = actions_dashboard.get_schema_from_file(file_id)
                 file_schemas.append({
                     "file_id": file_id,
                     "file_name": file_name,
