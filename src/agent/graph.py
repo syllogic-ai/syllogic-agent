@@ -153,19 +153,29 @@ def should_delegate_to_widget_team(state):
     This function checks the supervisor's reasoning and state to determine
     if tasks should be delegated to the widget_agent_team.
     """
+    # Handle both dict and object state formats
+    def get_state_value(state, key, default=None):
+        if isinstance(state, dict):
+            return state.get(key, default)
+        else:
+            return getattr(state, key, default)
+    
     # Check if supervisor is completed or failed FIRST (highest priority)
-    if state.supervisor_status in ["completed", "failed"]:
+    supervisor_status = get_state_value(state, 'supervisor_status', 'analyzing')
+    if supervisor_status in ["completed", "failed"]:
         return "__end__"
     
     # Check if supervisor wants to delegate tasks
-    if hasattr(state, 'current_reasoning') and state.current_reasoning:
-        if "DELEGATE_TO_WIDGET_TEAM" in state.current_reasoning:
-            return "widget_agent_team"
+    current_reasoning = get_state_value(state, 'current_reasoning')
+    if current_reasoning and "DELEGATE_TO_WIDGET_TEAM" in current_reasoning:
+        return "widget_agent_team"
     
     # Check if there are pending widget tasks
+    delegated_tasks = get_state_value(state, 'delegated_tasks', [])
     pending_widget_tasks = [
-        task for task in state.delegated_tasks 
-        if task.target_agent == "widget_agent_team" and task.task_status == "pending"
+        task for task in delegated_tasks 
+        if (isinstance(task, dict) and task.get("target_agent") == "widget_agent_team" and task.get("task_status") == "pending")
+        or (hasattr(task, 'target_agent') and task.target_agent == "widget_agent_team" and task.task_status == "pending")
     ]
     
     if pending_widget_tasks:

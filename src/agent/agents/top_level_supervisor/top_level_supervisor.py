@@ -8,9 +8,10 @@ import logging
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 
-from langchain_core.tools import tool
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.tools import tool, InjectedToolCallId
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from langgraph.prebuilt import create_react_agent, InjectedState
+from langgraph.types import Command
 from typing_extensions import Annotated
 
 from agent.models import TopLevelSupervisorState, WidgetAgentState
@@ -23,24 +24,36 @@ logger = logging.getLogger(__name__)
 
 @tool
 def analyze_available_data(
-    state: Annotated[TopLevelSupervisorState, InjectedState]
-) -> str:
-    """Analyze what data is available for the dashboard."""
+    state: Annotated[TopLevelSupervisorState, InjectedState],
+    tool_call_id: Annotated[str, InjectedToolCallId],
+) -> Command:
+    """Analyze what data is available for the dashboard. Takes no parameters - uses injected state."""
     try:
         # Get dashboard_id from state
         dashboard_id = state.dashboard_id
         
         data_info = get_available_data(dashboard_id)
         
-        # Update state with available data
-        state.available_files = data_info["available_files"]
-        state.available_data_summary = data_info["data_summary"]
+        success_message = f"Available data analysis completed:\n{data_info['data_summary']}"
         
-        return f"Available data analysis completed:\n{data_info['data_summary']}"
+        # Return Command to update state properly
+        return Command(
+            update={
+                "available_files": data_info["available_files"],
+                "available_data_summary": data_info["data_summary"],
+                "messages": [ToolMessage(content=success_message, tool_call_id=tool_call_id)],
+            }
+        )
         
     except Exception as e:
-        logger.error(f"Error analyzing available data: {e}")
-        return f"Error analyzing available data: {str(e)}"
+        error_msg = f"Error analyzing available data: {str(e)}"
+        logger.error(error_msg)
+        return Command(
+            update={
+                "error_messages": state.error_messages + [error_msg],
+                "messages": [ToolMessage(content=error_msg, tool_call_id=tool_call_id)],
+            }
+        )
 
 
 @tool
@@ -52,8 +65,9 @@ def delegate_widget_task(
     description: str,
     file_ids: List[str],
     state: Annotated[TopLevelSupervisorState, InjectedState],
+    tool_call_id: Annotated[str, InjectedToolCallId],
     widget_id: Optional[str] = None
-) -> str:
+) -> Command:
     """Delegate a widget-related task to the widget_agent_team.
     
     Args:
@@ -83,8 +97,8 @@ def delegate_widget_task(
         if widget_id:
             widget_agent_state_data["widget_id"] = widget_id
         
-        # Create and add the task
-        state = create_task(
+        # Create and add the task (this modifies the state in place)
+        updated_state = create_task(
             state=state,
             target_agent="widget_agent_team",
             task_instructions=task_instructions,
@@ -95,22 +109,43 @@ def delegate_widget_task(
             widget_agent_state_data=widget_agent_state_data
         )
         
+        success_message = f"Successfully delegated {operation} task for {widget_type} widget '{title}' to widget_agent_team"
+        
         logger.info(f"Delegated widget task: {operation} {widget_type} widget")
-        return f"Successfully delegated {operation} task for {widget_type} widget '{title}' to widget_agent_team"
+        
+        return Command(
+            update={
+                "delegated_tasks": updated_state.delegated_tasks,
+                "updated_at": datetime.now(),
+                "messages": [ToolMessage(content=success_message, tool_call_id=tool_call_id)],
+            }
+        )
         
     except Exception as e:
-        logger.error(f"Error delegating widget task: {e}")
-        return f"Error delegating widget task: {str(e)}"
+        error_msg = f"Error delegating widget task: {str(e)}"
+        logger.error(error_msg)
+        return Command(
+            update={
+                "error_messages": state.error_messages + [error_msg],
+                "messages": [ToolMessage(content=error_msg, tool_call_id=tool_call_id)],
+            }
+        )
 
 
 @tool
 def check_task_status(
-    state: Annotated[TopLevelSupervisorState, InjectedState]
-) -> str:
+    state: Annotated[TopLevelSupervisorState, InjectedState],
+    tool_call_id: Annotated[str, InjectedToolCallId],
+) -> Command:
     """Check the status of all delegated tasks."""
     try:
         if not state.delegated_tasks:
-            return "No tasks have been delegated yet."
+            message = "No tasks have been delegated yet."
+            return Command(
+                update={
+                    "messages": [ToolMessage(content=message, tool_call_id=tool_call_id)],
+                }
+            )
         
         status_report = []
         status_report.append(f"Total tasks: {len(state.delegated_tasks)}")
@@ -126,24 +161,37 @@ def check_task_status(
         status_report.append(f"Failed: {len(failed_tasks)}")
         
         # Check if all tasks are complete
-        if state.all_tasks_completed:
+        all_completed = len(completed_tasks) == len(state.delegated_tasks) and len(state.delegated_tasks) > 0
+        if all_completed:
             status_report.append("✅ All tasks are completed!")
         
-        return "\n".join(status_report)
+        status_message = "\n".join(status_report)
+        
+        return Command(
+            update={
+                "all_tasks_completed": all_completed,
+                "messages": [ToolMessage(content=status_message, tool_call_id=tool_call_id)],
+            }
+        )
         
     except Exception as e:
-        logger.error(f"Error checking task status: {e}")
-        return f"Error checking task status: {str(e)}"
+        error_msg = f"Error checking task status: {str(e)}"
+        logger.error(error_msg)
+        return Command(
+            update={
+                "error_messages": state.error_messages + [error_msg],
+                "messages": [ToolMessage(content=error_msg, tool_call_id=tool_call_id)],
+            }
+        )
 
 
 @tool
 def execute_widget_tasks(
-    state: Annotated[TopLevelSupervisorState, InjectedState]
-) -> str:
+    state: Annotated[TopLevelSupervisorState, InjectedState],
+    tool_call_id: Annotated[str, InjectedToolCallId],
+) -> Command:
     """Execute pending widget tasks by delegating to widget_agent_team."""
     try:
-        from langgraph.types import Command
-        
         # Find pending widget tasks
         pending_tasks = [
             task for task in state.delegated_tasks 
@@ -151,43 +199,75 @@ def execute_widget_tasks(
         ]
         
         if not pending_tasks:
-            return "No pending widget tasks to execute"
+            message = "No pending widget tasks to execute"
+            return Command(
+                update={
+                    "messages": [ToolMessage(content=message, tool_call_id=tool_call_id)],
+                }
+            )
         
         # Mark the first task as in_progress
         current_task = pending_tasks[0]
         current_task.task_status = "in_progress"
         current_task.started_at = datetime.now()
         
-        state.current_reasoning = f"Executing widget task: {current_task.task_instructions}"
-        state.updated_at = datetime.now()
+        execution_message = f"DELEGATE_TO_WIDGET_TEAM: {current_task.task_id}"
+        reasoning = f"Executing widget task: {current_task.task_instructions}"
         
         logger.info(f"Executing task {current_task.task_id} with widget_agent_team")
         
         # This will signal to the graph to route to widget_agent_team
-        return f"DELEGATE_TO_WIDGET_TEAM: {current_task.task_id}"
+        return Command(
+            update={
+                "current_reasoning": reasoning,
+                "updated_at": datetime.now(),
+                "messages": [ToolMessage(content=execution_message, tool_call_id=tool_call_id)],
+            }
+        )
         
     except Exception as e:
-        logger.error(f"Error executing widget tasks: {e}")
-        return f"Error executing widget tasks: {str(e)}"
+        error_msg = f"Error executing widget tasks: {str(e)}"
+        logger.error(error_msg)
+        return Command(
+            update={
+                "error_messages": state.error_messages + [error_msg],
+                "messages": [ToolMessage(content=error_msg, tool_call_id=tool_call_id)],
+            }
+        )
 
 
 @tool
 def finalize_response(
     final_message: str,
-    state: Annotated[TopLevelSupervisorState, InjectedState]
-) -> str:
+    state: Annotated[TopLevelSupervisorState, InjectedState],
+    tool_call_id: Annotated[str, InjectedToolCallId],
+) -> Command:
     """Finalize the response when all tasks are completed."""
     try:
-        state.final_response = final_message
-        state.supervisor_status = "completed"
-        state.updated_at = datetime.now()
+        completion_message = f"Response finalized: {final_message}"
         
         logger.info("Top level supervisor completed all tasks")
-        return f"Response finalized: {final_message}"
+        
+        return Command(
+            update={
+                "final_response": final_message,
+                "supervisor_status": "completed",
+                "updated_at": datetime.now(),
+                "messages": [ToolMessage(content=completion_message, tool_call_id=tool_call_id)],
+            }
+        )
         
     except Exception as e:
-        logger.error(f"Error finalizing response: {e}")
-        return f"Error finalizing response: {str(e)}"
+        error_msg = f"Error finalizing response: {str(e)}"
+        logger.error(error_msg)
+        return Command(
+            update={
+                "error_messages": state.error_messages + [error_msg],
+                "supervisor_status": "failed",
+                "updated_at": datetime.now(),
+                "messages": [ToolMessage(content=error_msg, tool_call_id=tool_call_id)],
+            }
+        )
 
 
 # Define the tools available to the supervisor
@@ -268,8 +348,9 @@ IMPORTANT: Always respond with the structured SupervisorResponse format providin
     return create_react_agent(
         model=model_name,
         tools=supervisor_tools,
-        prompt=system_prompt,
-        response_format=SupervisorResponse
+        prompt=system_prompt
+        # Temporarily removing response_format to avoid validation errors
+        # response_format=SupervisorResponse
     )
 
 
