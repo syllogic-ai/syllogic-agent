@@ -5,19 +5,22 @@ analyzes user requests, reads available data, and delegates appropriate tasks.
 """
 
 import logging
+import uuid
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 
 from langchain_core.tools import tool, InjectedToolCallId
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent, InjectedState
-from langgraph.types import Command
+from langgraph.types import Command, Send
+from langgraph.graph import END
 from typing_extensions import Annotated
 
-from agent.models import TopLevelSupervisorState, WidgetAgentState
+from agent.models import TopLevelSupervisorState, WidgetAgentState, DelegatedTask
 from .tools.data_reader import get_available_data
-from .tools.task_manager import create_task, update_task_status, get_pending_tasks
-from .structured_output import SupervisorResponse, TaskCreationPlan, SupervisorDecision
+from .tools.task_manager import update_task_status, get_pending_tasks
+from .structured_output import SupervisorResponse, TaskCreationPlan, SupervisorDecision, TaskCreationRequest
 
 logger = logging.getLogger(__name__)
 
@@ -29,18 +32,36 @@ def analyze_available_data(
 ) -> Command:
     """Analyze what data is available for the dashboard. Takes no parameters - uses injected state."""
     try:
+        # Check if data analysis has already been completed
+        if state.available_data_summary and state.available_files:
+            return Command(
+                update={
+                    "messages": [ToolMessage(
+                        content="Data analysis already completed. Available data summary is ready.",
+                        tool_call_id=tool_call_id
+                    )],
+                }
+            )
+        
         # Get dashboard_id from state
         dashboard_id = state.dashboard_id
         
         data_info = get_available_data(dashboard_id)
         
-        success_message = f"Available data analysis completed:\n{data_info['data_summary']}"
+        success_message = f"""✅ **DATA ANALYSIS COMPLETE**
+
+{data_info['data_summary']}
+
+**📋 NEXT STEP:** Use the plan_widget_tasks tool to intelligently analyze the user request and create the appropriate DelegatedTask objects for the widget_agent_team."""
         
         # Return Command to update state properly
         return Command(
             update={
                 "available_files": data_info["available_files"],
+                "file_schemas": data_info["file_schemas"],  # Store detailed schema info
                 "available_data_summary": data_info["data_summary"],
+                "supervisor_status": "delegating",  # Move to next phase
+                "updated_at": datetime.now(),
                 "messages": [ToolMessage(content=success_message, tool_call_id=tool_call_id)],
             }
         )
@@ -56,73 +77,139 @@ def analyze_available_data(
         )
 
 
+
 @tool
-def delegate_widget_task(
-    task_instructions: str,
-    operation: str,
-    widget_type: str,
-    title: str,
-    description: str,
-    file_ids: List[str],
+def plan_widget_tasks(
     state: Annotated[TopLevelSupervisorState, InjectedState],
     tool_call_id: Annotated[str, InjectedToolCallId],
-    widget_id: Optional[str] = None
 ) -> Command:
-    """Delegate a widget-related task to the widget_agent_team.
-    
-    Args:
-        task_instructions: Detailed instructions for the widget task
-        operation: Widget operation (CREATE, UPDATE, DELETE)
-        widget_type: Type of widget (line, bar, pie, area, radial, kpi, table)
-        title: Widget title
-        description: Widget description
-        file_ids: List of file IDs to use for the widget
-        widget_id: Widget ID for UPDATE/DELETE operations or context reference
-    """
+    """AI-powered tool that analyzes user query and available data to create multiple DelegatedTask objects."""
     try:
-        # Prepare WidgetAgentState initialization data
-        widget_agent_state_data = {
-            "task_instructions": task_instructions,
-            "user_prompt": state.user_prompt,
-            "operation": operation,
-            "widget_type": widget_type,
-            "title": title,
-            "description": description,
-            "dashboard_id": state.dashboard_id,
-            "chat_id": state.chat_id,
-            "file_ids": file_ids
-        }
+        # Check if planning has already been done
+        if state.delegated_tasks:
+            return Command(
+                update={
+                    "messages": [ToolMessage(
+                        content=f"Task planning already completed. {len(state.delegated_tasks)} task(s) have been planned and are ready for execution.",
+                        tool_call_id=tool_call_id
+                    )],
+                }
+            )
         
-        # Add widget_id if provided
-        if widget_id:
-            widget_agent_state_data["widget_id"] = widget_id
+        # Use AI with structured output to create intelligent task plan
+        planning_llm = ChatOpenAI(model="gpt-4o-mini")
+        planning_llm_structured = planning_llm.with_structured_output(TaskCreationPlan)
         
-        # Create and add the task (this modifies the state in place)
-        updated_state = create_task(
-            state=state,
-            target_agent="widget_agent_team",
-            task_instructions=task_instructions,
-            widget_type=widget_type,
-            operation=operation,
-            file_ids=file_ids,
-            widget_id=widget_id,
-            widget_agent_state_data=widget_agent_state_data
-        )
+        # Create focused planning prompt with emphasis on minimal task creation
+        planning_prompt = f"""
+You are an expert data visualization and dashboard planning AI. Analyze the user's request and available data to create a MINIMAL, targeted plan for widget creation.
+
+**USER REQUEST:**
+{state.user_prompt}
+
+**AVAILABLE DATA:**
+Data Summary: {state.available_data_summary or "No data summary available"}
+Available Files: {len(state.available_files)} file(s) 
+File IDs: {state.available_files}
+Dashboard ID: {state.dashboard_id}
+Chat ID: {state.chat_id}
+
+**CRITICAL TASK CREATION RULES:**
+🎯 **ONLY CREATE TASKS THAT DIRECTLY ANSWER THE USER QUERY**
+🎯 **NO NEED TO CREATE MULTIPLE OR TOO MANY WIDGETS IF THE USER QUERY CAN BE ANSWERED BY JUST ONE OR A COUPLE OF TASKS**
+🎯 **QUALITY OVER QUANTITY - PREFER FEWER, MORE FOCUSED WIDGETS**
+
+**MINIMAL PLANNING STRATEGY:**
+1. Identify the CORE question the user is asking
+2. Determine the MINIMUM number of widgets needed to answer that question
+3. Create ONLY the essential tasks - avoid "nice to have" widgets
+4. Each task must directly contribute to answering the user's specific request
+
+**WIDGET TYPE GUIDANCE:**
+- bar: Comparisons between categories, rankings, grouped data
+- line: Trends over time, time series analysis, progression  
+- pie: Parts of a whole, percentage breakdowns, composition
+- area: Cumulative values over time, stacked trends, volume
+- radial: Progress indicators, completion rates, gauges
+- kpi: Single important metrics, key performance numbers, summary stats
+- table: Detailed data exploration, multi-dimensional data, raw data display
+
+**FOCUSED TASK CREATION EXAMPLES:**
+- "Show me sales trends" → 1 line chart (STOP - that's sufficient)
+- "What's our revenue?" → 1 KPI widget (STOP - that answers it)
+- "Create a bar chart of products" → 1 bar chart (STOP - exactly what was requested)
+- "Compare this quarter vs last" → 1-2 widgets maximum (comparison chart + maybe summary KPI)
+
+**AVOID OVER-PLANNING:**
+❌ Don't create comprehensive dashboards unless explicitly requested
+❌ Don't add "supporting" widgets unless truly necessary
+❌ Don't create multiple views of the same data
+❌ Don't anticipate unstated user needs
+
+You must provide a structured TaskCreationPlan with:
+1. tasks: List of TaskCreationRequest objects (KEEP THIS MINIMAL!)
+2. strategy_summary: Explanation of why this minimal set answers the user's question
+3. duplicate_check: Confirmation no duplicates are being created
+
+For each task, ensure:
+- widget_type: Choose the most appropriate type based on data and purpose
+- operation: Always "CREATE" for new widgets  
+- title: Clear, specific title indicating the widget's purpose
+- description: What insights this widget provides to answer the user's question
+- file_ids: Use the available file IDs provided in the context
+- task_instructions: Detailed instructions for widget_agent_team execution
+"""
+
+        # Get structured AI planning response
+        task_plan = planning_llm_structured.invoke(planning_prompt)
         
-        success_message = f"Successfully delegated {operation} task for {widget_type} widget '{title}' to widget_agent_team"
+        # Create DelegatedTask objects from the AI plan
+        created_task_names = []
+        updated_tasks = state.delegated_tasks.copy()  # Start with existing tasks
         
-        logger.info(f"Delegated widget task: {operation} {widget_type} widget")
+        for task_request in task_plan.tasks:
+            # Create each task directly using DelegatedTask model
+            new_task = DelegatedTask(
+                target_agent="widget_agent_team",
+                task_instructions=task_request.task_instructions,
+                widget_type=task_request.widget_type,
+                operation=task_request.operation,
+                file_ids=task_request.file_ids,
+                title=task_request.title,
+                description=task_request.description,
+                user_prompt=state.user_prompt,
+                dashboard_id=state.dashboard_id,
+                chat_id=state.chat_id,
+                widget_id=task_request.widget_id,
+                task_status="pending"  # Always create as pending
+            )
+            updated_tasks.append(new_task)
+            created_task_names.append(f"{task_request.title} ({task_request.widget_type})")
         
+        # Create comprehensive success message
+        success_message = f"""✅ **AI PLANNING COMPLETE**
+
+**Strategy:** {task_plan.strategy_summary}
+
+**Tasks Created:** {len(task_plan.tasks)} 
+{chr(10).join([f"• {name}" for name in created_task_names])}
+
+**Duplicate Check:** {task_plan.duplicate_check}
+
+**📋 NEXT STEP:** Use execute_widget_tasks to process these AI-planned tasks with the widget_agent_team."""
+
         return Command(
             update={
-                "delegated_tasks": updated_state.delegated_tasks,
+                "delegated_tasks": updated_tasks,  # CRITICAL: Include updated tasks in state
+                "current_reasoning": f"AI planning completed: {len(task_plan.tasks)} widget tasks created based on intelligent analysis of user request and available data.",
+                "supervisor_status": "monitoring",  # Ready to monitor task execution
                 "updated_at": datetime.now(),
                 "messages": [ToolMessage(content=success_message, tool_call_id=tool_call_id)],
             }
         )
         
     except Exception as e:
-        error_msg = f"Error delegating widget task: {str(e)}"
+        error_msg = f"Error in AI planning: {str(e)}"
         logger.error(error_msg)
         return Command(
             update={
@@ -130,6 +217,9 @@ def delegate_widget_task(
                 "messages": [ToolMessage(content=error_msg, tool_call_id=tool_call_id)],
             }
         )
+
+
+# delegate_widget_task REMOVED - redundant with plan_widget_tasks + execute_widget_tasks workflow
 
 
 @tool
@@ -190,7 +280,7 @@ def execute_widget_tasks(
     state: Annotated[TopLevelSupervisorState, InjectedState],
     tool_call_id: Annotated[str, InjectedToolCallId],
 ) -> Command:
-    """Execute pending widget tasks by delegating to widget_agent_team."""
+    """Execute pending widget tasks by directly invoking widget_agent_team subgraph."""
     try:
         # Find pending widget tasks
         pending_tasks = [
@@ -206,20 +296,73 @@ def execute_widget_tasks(
                 }
             )
         
-        # Mark the first task as in_progress
+        # Process the first pending task (one at a time for now)
         current_task = pending_tasks[0]
-        current_task.task_status = "in_progress"
-        current_task.started_at = datetime.now()
         
-        execution_message = f"DELEGATE_TO_WIDGET_TEAM: {current_task.task_id}"
-        reasoning = f"Executing widget task: {current_task.task_instructions}"
+        # Import widget graph here to avoid circular imports
+        from agent.graph import build_widget_agent_graph
         
-        logger.info(f"Executing task {current_task.task_id} with widget_agent_team")
+        # Create widget agent input from DelegatedTask data
+        widget_input = {
+            "messages": [],  # Required for LangGraph
+            "remaining_steps": 10,  # Required for LangGraph
+            "task_id": current_task.task_id,
+            "task_instructions": current_task.task_instructions,
+            "user_prompt": current_task.user_prompt,
+            "operation": current_task.operation,
+            "widget_type": current_task.widget_type,
+            "dashboard_id": current_task.dashboard_id,
+            "chat_id": current_task.chat_id,
+            "file_ids": current_task.file_ids,
+            "widget_id": current_task.widget_id or str(uuid.uuid4()),  # Generate ID if None
+            "title": current_task.title,
+            "description": current_task.description,
+            "task_status": "in_progress",
+            "created_at": current_task.created_at,
+            "updated_at": datetime.now(),
+            "started_at": datetime.now(),
+            "iteration_count": 0,
+            "file_schemas": [],
+            "file_sample_data": [],
+            "error_messages": [],
+            "widget_creation_completed": False,
+            "widget_update_completed": False,
+            "widget_deletion_completed": False,
+            "data_validated": False,
+        }
         
-        # This will signal to the graph to route to widget_agent_team
+        logger.info(f"Invoking widget_agent_team for task {current_task.task_id}: {current_task.operation} {current_task.widget_type} widget")
+        
+        # Build and invoke widget agent subgraph
+        widget_graph = build_widget_agent_graph()
+        widget_result = widget_graph.invoke(widget_input)
+        
+        # Update task status based on widget result
+        updated_tasks = []
+        for task in state.delegated_tasks:
+            if task.task_id == current_task.task_id:
+                # Update task with result
+                task.task_status = widget_result.get("task_status", "completed")
+                task.completed_at = datetime.now()
+                task.started_at = datetime.now()
+                
+                if widget_result.get("error_messages"):
+                    task.error_message = "; ".join(widget_result["error_messages"])
+                    task.task_status = "failed"
+                else:
+                    task.result = f"Widget {current_task.operation} operation completed successfully"
+                    
+            updated_tasks.append(task)
+        
+        execution_message = f"✅ **WIDGET TASK EXECUTED**\n\nCompleted {current_task.operation} {current_task.widget_type} widget task\nStatus: {widget_result.get('task_status', 'completed')}"
+        
+        logger.info(f"Widget task {current_task.task_id} completed with status: {widget_result.get('task_status')}")
+        
         return Command(
             update={
-                "current_reasoning": reasoning,
+                "delegated_tasks": updated_tasks,
+                "supervisor_status": "analyzing",  # Return to analyzing to check for more tasks
+                "current_reasoning": f"Widget task completed: {widget_result.get('task_status', 'completed')}",
                 "updated_at": datetime.now(),
                 "messages": [ToolMessage(content=execution_message, tool_call_id=tool_call_id)],
             }
@@ -231,7 +374,62 @@ def execute_widget_tasks(
         return Command(
             update={
                 "error_messages": state.error_messages + [error_msg],
+                "supervisor_status": "failed",
                 "messages": [ToolMessage(content=error_msg, tool_call_id=tool_call_id)],
+            }
+        )
+
+
+@tool
+def generate_error_response(
+    failed_tool: str,
+    error_messages: List[str],
+    user_prompt: str,
+    state: Annotated[TopLevelSupervisorState, InjectedState],
+    tool_call_id: Annotated[str, InjectedToolCallId],
+) -> Command:
+    """Generate an AI-powered error response when tools fail repeatedly."""
+    try:
+        # Create a user-friendly error message
+        error_summary = f"I encountered repeated issues while trying to {failed_tool}. "
+        
+        if failed_tool == "analyze_available_data":
+            error_summary += "I was unable to access or analyze the data files needed for your request. "
+        elif failed_tool == "plan_widget_tasks":
+            error_summary += "I had trouble planning the appropriate widgets for your request. "
+        elif failed_tool == "delegate_widget_task":
+            error_summary += "I couldn't successfully delegate the widget creation task. "
+        else:
+            error_summary += "There was a technical issue with the system. "
+        
+        # Add specific error details if available
+        if error_messages:
+            recent_errors = error_messages[-3:]  # Show last 3 errors
+            error_details = "\\n".join([f"• {error}" for error in recent_errors])
+            error_summary += f"\\n\\nTechnical details:\\n{error_details}"
+        
+        error_summary += "\\n\\nPlease try your request again later, or contact support if the issue persists."
+        
+        return Command(
+            goto=END,
+            update={
+                "final_response": error_summary,
+                "supervisor_status": "failed",
+                "updated_at": datetime.now(),
+                "messages": [ToolMessage(content=error_summary, tool_call_id=tool_call_id)],
+            }
+        )
+        
+    except Exception as e:
+        fallback_message = f"I'm sorry, but I encountered technical difficulties while processing your request: '{user_prompt}'. Please try again later or contact support."
+        logger.error(f"Error generating error response: {e}")
+        return Command(
+            goto=END,
+            update={
+                "final_response": fallback_message,
+                "supervisor_status": "failed",
+                "updated_at": datetime.now(),
+                "messages": [ToolMessage(content=fallback_message, tool_call_id=tool_call_id)],
             }
         )
 
@@ -249,6 +447,7 @@ def finalize_response(
         logger.info("Top level supervisor completed all tasks")
         
         return Command(
+            goto=END,
             update={
                 "final_response": final_message,
                 "supervisor_status": "completed",
@@ -273,40 +472,50 @@ def finalize_response(
 # Define the tools available to the supervisor
 supervisor_tools = [
     analyze_available_data,
-    delegate_widget_task,
+    plan_widget_tasks,
     execute_widget_tasks,
     check_task_status,
+    generate_error_response,
     finalize_response
 ]
 
 # Create the supervisor agent using create_react_agent with structured output
-def create_top_level_supervisor(model_name: str = "openai:gpt-4o-mini"):
+def create_top_level_supervisor(model_name: str = "gpt-4o-mini"):
     """Create the top-level supervisor agent with structured output."""
+    
+    # Initialize OpenAI model following widget_agent_team pattern
+    model = ChatOpenAI(model=model_name)
     
     system_prompt = """You are the Top Level Supervisor for a dashboard and widget management system.
 
 Your responsibilities:
 1. Analyze user requests and understand what they want to accomplish
 2. Read and understand available data sources 
-3. Strategically plan widget creation to comprehensively answer the user's needs
-4. Delegate complementary tasks that work together to fulfill the request
+3. Create MINIMAL, focused widget plans that directly answer the user's question
+4. Delegate only essential tasks - avoid over-planning or unnecessary widgets
 5. Monitor task progress and coordinate between teams
 6. Provide structured responses about your progress and decisions
 
 Available Agent Teams:
 - widget_agent_team: Handles widget creation, updates, and deletion operations
 
-CRITICAL TASK PLANNING RULES:
-1. NEVER create duplicate or redundant tasks
-2. Tasks must complement each other to provide a complete answer
-3. For specific requests (e.g., "create a bar chart"), create exactly what was asked
-4. For vague requests, think strategically about what widgets would best answer the user's question
+🎯 **CRITICAL TASK CREATION PHILOSOPHY:**
+**ONLY CREATE TASKS THAT DIRECTLY ANSWER THE USER QUERY**
+**NO NEED TO CREATE MULTIPLE OR TOO MANY WIDGETS IF THE USER QUERY CAN BE ANSWERED BY JUST ONE OR A COUPLE OF TASKS**
 
-WIDGET STRATEGY GUIDELINES:
-- Single chart request: Create exactly one widget as requested
-- Exploratory questions: Consider multiple complementary widgets (e.g., overview + drill-down)
-- Dashboard requests: Plan 3-5 widgets that tell a complete story
+MINIMAL TASK PLANNING RULES:
+1. NEVER create duplicate or redundant tasks
+2. Create the MINIMUM number of widgets needed to answer the user's question
+3. For specific requests (e.g., "create a bar chart"), create exactly one widget as requested
+4. For analytical questions, create only essential widgets - usually 1-2 maximum
+5. Avoid "comprehensive" or "supporting" widgets unless explicitly requested
+
+FOCUSED WIDGET STRATEGY:
+- Single chart request: Create exactly one widget (STOP - that's sufficient)
+- Data question: Create one primary visualization that answers it directly
+- Comparison request: Create one comparison widget (maybe + one summary KPI if essential)
 - Update/delete requests: Use context_widget_ids to identify target widgets
+- Avoid dashboard-style multi-widget responses unless user explicitly asks for a "dashboard"
 
 STRUCTURED OUTPUT REQUIREMENT:
 You MUST always provide responses in the specified structured format. Your response should include:
@@ -316,16 +525,33 @@ You MUST always provide responses in the specified structured format. Your respo
 - Task creation plans when delegating
 - Summary of progress when monitoring
 
-When you receive a user request:
-1. FIRST: Use analyze_available_data to understand what data is available
-2. THEN: Analyze the user prompt and plan your widget strategy:
-   - What is the user really trying to understand?
-   - What widgets would best answer their question?
-   - How can widgets complement each other?
-3. CHECK: Review any existing delegated tasks to avoid duplicates
-4. DELEGATE: Use delegate_widget_task for each unique widget needed
-5. MONITOR: Use check_task_status to track progress
-6. RESPOND: Always provide structured output about your decisions and progress
+WORKFLOW LOGIC - Follow this step by step:
+
+1. **DATA ANALYSIS PHASE** (status: "analyzing"):
+   - IF available_data_summary is empty or None, use analyze_available_data tool
+   - IF available_data_summary exists, proceed to step 2 (data analysis complete)
+
+2. **AI PLANNING PHASE** (status: "delegating"):
+   - IF no delegated_tasks exist yet, use plan_widget_tasks tool
+   - This AI-powered tool will analyze the user request and available data
+   - It creates multiple DelegatedTask objects as needed to fully answer the user's question
+   - The AI planning tool determines: widget types, titles, descriptions, and task instructions
+   - IF delegated_tasks already exist, skip to step 3 (planning already complete)
+
+3. **MONITORING PHASE** (status: "monitoring"):
+   - Use check_task_status to track task progress
+   - Use execute_widget_tasks to process pending tasks
+   
+4. **COMPLETION PHASE** (status: "completed"):
+   - Use finalize_response when all tasks are completed
+
+5. **ERROR HANDLING** (any status):
+   - Check tool_failure_counts and last_failed_tool to identify repeated failures
+   - If a tool has failed max_tool_retries times, use generate_error_response
+   - Otherwise, you may retry the failed tool if it makes sense
+   - Always consider whether retrying will help or if the issue is fundamental
+
+CRITICAL: You are an AI agent - use your intelligence to analyze the user's request and available data, then make smart decisions about which widgets to create. Check your current supervisor_status, available_data_summary, delegated_tasks, and tool_failure_counts before deciding what to do next!
 
 For each widget operation, you must specify:
 - operation: CREATE, UPDATE, or DELETE
@@ -335,73 +561,154 @@ For each widget operation, you must specify:
 - file_ids: List of relevant file IDs from available data
 - widget_id: Required for UPDATE/DELETE operations (use context_widget_ids)
 
-SMART DELEGATION EXAMPLES:
-- "Show me sales trends" → 1 line chart of sales over time
-- "Analyze our performance" → Multiple widgets: KPI summary, trends chart, breakdown by category
+MINIMAL DELEGATION EXAMPLES:
+- "Show me sales trends" → 1 line chart of sales over time (STOP - that answers it)
+- "Analyze our performance" → 1 primary performance chart (avoid multiple widgets unless essential)
 - "Update the revenue chart" → 1 UPDATE operation using provided widget_id
-- "What's our best selling product?" → Bar chart + KPI widget for comprehensive answer
+- "What's our best selling product?" → 1 bar chart showing top products (avoid additional KPIs unless requested)
+- "Create a dashboard" → Multiple widgets allowed ONLY when user explicitly asks for "dashboard"
 
-Always think before delegating: Does this task complement my existing tasks? Am I avoiding duplicates? Will these widgets together answer the user's question completely?
+Always think before delegating: Is this the MINIMUM needed to answer the user's question? Am I avoiding over-planning? Will this single widget (or minimal set) fully satisfy their request?
 
 IMPORTANT: Always respond with the structured SupervisorResponse format providing clear status, message, and relevant details."""
 
     return create_react_agent(
-        model=model_name,
+        model=model,  # Use the properly initialized ChatOpenAI model
         tools=supervisor_tools,
-        prompt=system_prompt
+        prompt=system_prompt,
+        state_schema=TopLevelSupervisorState  # Specify the state schema for InjectedState
         # Temporarily removing response_format to avoid validation errors
         # response_format=SupervisorResponse
     )
 
 
-def top_level_supervisor(state: TopLevelSupervisorState) -> Dict[str, Any]:
+def handle_tool_failure(supervisor_state: TopLevelSupervisorState, error_message: str) -> Dict[str, Any]:
+    """Handle tool failures with retry logic and error response generation."""
+    try:
+        # Extract tool name from error message if possible
+        failed_tool = "unknown_tool"
+        if "analyze_available_data" in error_message:
+            failed_tool = "analyze_available_data"
+        elif "plan_widget_tasks" in error_message:
+            failed_tool = "plan_widget_tasks"
+        elif "delegate_widget_task" in error_message:
+            failed_tool = "delegate_widget_task"
+        
+        # Update failure counts
+        current_failures = supervisor_state.tool_failure_counts.get(failed_tool, 0) + 1
+        supervisor_state.tool_failure_counts[failed_tool] = current_failures
+        supervisor_state.last_failed_tool = failed_tool
+        
+        # Add error to messages
+        supervisor_state.error_messages.append(f"Tool {failed_tool} failed (attempt {current_failures}): {error_message}")
+        
+        # Check if we've exceeded retry limit
+        if current_failures > supervisor_state.max_tool_retries:
+            # Generate AI-powered error response
+            error_summary = f"I encountered repeated issues with {failed_tool} after {current_failures} attempts. "
+            
+            if failed_tool == "analyze_available_data":
+                error_summary += "I was unable to access or analyze the data files needed for your request. This might be due to database connectivity issues or missing data files."
+            elif failed_tool == "plan_widget_tasks":
+                error_summary += "I had trouble planning the appropriate widgets for your request. This might be due to complex requirements or system limitations."
+            elif failed_tool == "delegate_widget_task":
+                error_summary += "I couldn't successfully delegate the widget creation task. This might be due to resource constraints or system issues."
+            else:
+                error_summary += "There was a persistent technical issue with the system."
+            
+            error_summary += f"\\n\\nYour request: '{supervisor_state.user_prompt}'\\n\\nPlease try again later or contact support if the issue persists."
+            
+            return {
+                "final_response": error_summary,
+                "supervisor_status": "failed",
+                "error_messages": supervisor_state.error_messages,
+                "tool_failure_counts": supervisor_state.tool_failure_counts,
+                "updated_at": datetime.now()
+            }
+        else:
+            # Tool can still be retried
+            retry_message = f"Tool {failed_tool} failed (attempt {current_failures}/{supervisor_state.max_tool_retries}). Will attempt retry if appropriate."
+            
+            return {
+                "current_reasoning": retry_message,
+                "supervisor_status": supervisor_state.supervisor_status,  # Keep current status for retry
+                "error_messages": supervisor_state.error_messages,
+                "tool_failure_counts": supervisor_state.tool_failure_counts,
+                "last_failed_tool": failed_tool,
+                "updated_at": datetime.now()
+            }
+            
+    except Exception as e:
+        logger.error(f"Error in handle_tool_failure: {e}")
+        return {
+            "final_response": f"I encountered technical difficulties while processing your request. Please try again later.",
+            "supervisor_status": "failed",
+            "error_messages": supervisor_state.error_messages + [f"Error handler failed: {str(e)}"],
+            "updated_at": datetime.now()
+        }
+
+
+def top_level_supervisor(state) -> Dict[str, Any]:
     """Main entry point for the top level supervisor node.
     
     This function creates and invokes the supervisor agent, handling the
     orchestration of tasks across specialized agent teams.
     """
+    supervisor_state = None  # Initialize to avoid UnboundLocalError
     try:
+        # Convert dict state to TopLevelSupervisorState for proper tool injection
+        if isinstance(state, dict):
+            # Convert 'pending' status to 'analyzing' if present
+            if state.get('supervisor_status') == 'pending':
+                state['supervisor_status'] = 'analyzing'
+            supervisor_state = TopLevelSupervisorState(**state)
+        else:
+            supervisor_state = state
+            
         # Create the supervisor agent
         supervisor_agent = create_top_level_supervisor()
         
         # Prepare the message for the agent
         user_message = HumanMessage(
             content=f"""
-User Request: {state.user_prompt}
-Dashboard ID: {state.dashboard_id}
-Chat ID: {state.chat_id}
-Request ID: {state.request_id}
-User ID: {state.user_id}
+User Request: {supervisor_state.user_prompt}
+Dashboard ID: {supervisor_state.dashboard_id}
+Chat ID: {supervisor_state.chat_id}
+Request ID: {supervisor_state.request_id}
+User ID: {supervisor_state.user_id}
 
 Please analyze this request and coordinate the necessary tasks to fulfill it.
 Start by analyzing the available data, then determine what needs to be done.
 """
         )
         
-        # Invoke the supervisor agent with complete state
+        # For InjectedState to work properly with create_react_agent, 
+        # we need to pass the full state as the primary input
         agent_input = {
-            "messages": [user_message],
-            # Pass through all the required state fields for tool injection
-            "user_prompt": state.user_prompt,
-            "user_id": state.user_id,
-            "dashboard_id": state.dashboard_id, 
-            "chat_id": state.chat_id,
-            "request_id": state.request_id,
-            "file_ids": state.file_ids,
-            "context_widget_ids": state.context_widget_ids,
-            "available_files": state.available_files,
-            "available_data_summary": state.available_data_summary,
-            "delegated_tasks": state.delegated_tasks,
-            "supervisor_status": state.supervisor_status,
-            "current_reasoning": state.current_reasoning,
-            "final_response": state.final_response,
-            "error_messages": state.error_messages,
-            "created_at": state.created_at,
-            "updated_at": state.updated_at,
-            "all_tasks_completed": state.all_tasks_completed
+            **supervisor_state.model_dump(),  # Include all state fields
+            "messages": [user_message],  # Add the user message to messages
         }
         
-        result = supervisor_agent.invoke(agent_input)
+        # Invoke the agent with the complete state and handle potential failures
+        try:
+            result = supervisor_agent.invoke(agent_input)
+        except Exception as tool_error:
+            # Handle tool execution errors
+            return handle_tool_failure(supervisor_state, str(tool_error))
+        
+        # Check if any tool in the result requested termination via Command(goto=END)
+        # This happens when finalize_response or generate_error_response tools are called
+        if result and "messages" in result:
+            for message in result["messages"]:
+                # Check if this is a ToolMessage from finalize_response or generate_error_response
+                if hasattr(message, 'tool_call_id') and hasattr(message, 'content'):
+                    if ("Response finalized:" in str(message.content) or 
+                        "I encountered repeated issues" in str(message.content) or
+                        "I'm sorry, but I encountered technical difficulties" in str(message.content)):
+                        # These tools used goto=END, so we should terminate
+                        logger.info("Tool requested termination - ending supervisor execution")
+                        from langgraph.types import Command
+                        return Command(goto=END, update=result)
         
         # Extract structured response
         structured_response = None
@@ -413,7 +720,7 @@ Start by analyzing the available data, then determine what needs to be done.
             
             # Update supervisor status based on structured response
             if structured_response.status in ["analyzing", "planning", "delegating", "monitoring", "completed", "failed"]:
-                state.supervisor_status = structured_response.status
+                supervisor_state.supervisor_status = structured_response.status
                 
         elif result and "messages" in result:
             # Fallback to message content if no structured response
@@ -423,26 +730,53 @@ Start by analyzing the available data, then determine what needs to be done.
             else:
                 response_content = str(last_message)
         
+        # Check if supervisor status indicates completion - if so, terminate
+        if supervisor_state.supervisor_status in ["completed", "failed"]:
+            logger.info(f"Supervisor status is {supervisor_state.supervisor_status} - terminating execution")
+            from langgraph.types import Command
+            return Command(
+                goto=END,
+                update={
+                    "current_reasoning": response_content,
+                    "supervisor_status": supervisor_state.supervisor_status,
+                    "updated_at": datetime.now(),
+                    "structured_response": structured_response
+                }
+            )
+        
         # Update state
-        state.current_reasoning = response_content
-        state.updated_at = datetime.now()
+        supervisor_state.current_reasoning = response_content
+        supervisor_state.updated_at = datetime.now()
         
         # Return both regular state updates and structured response for external use
         return {
             "current_reasoning": response_content,
-            "supervisor_status": state.supervisor_status,
-            "updated_at": state.updated_at,
+            "supervisor_status": supervisor_state.supervisor_status,
+            "updated_at": supervisor_state.updated_at,
             "structured_response": structured_response
         }
         
     except Exception as e:
         logger.error(f"Error in top level supervisor: {e}")
-        state.error_messages.append(f"Supervisor error: {str(e)}")
-        state.supervisor_status = "failed"
-        state.updated_at = datetime.now()
-        
-        return {
-            "error_messages": state.error_messages,
-            "supervisor_status": "failed",
-            "updated_at": state.updated_at
-        }
+        # Handle case where supervisor_state creation failed
+        if supervisor_state is None:
+            if isinstance(state, dict):
+                error_messages = state.get("error_messages", []) + [f"Supervisor error: {str(e)}"]
+            else:
+                error_messages = [f"Supervisor error: {str(e)}"]
+            
+            return {
+                "error_messages": error_messages,
+                "supervisor_status": "failed",
+                "updated_at": datetime.now()
+            }
+        else:
+            supervisor_state.error_messages.append(f"Supervisor error: {str(e)}")
+            supervisor_state.supervisor_status = "failed"
+            supervisor_state.updated_at = datetime.now()
+            
+            return {
+                "error_messages": supervisor_state.error_messages,
+                "supervisor_status": "failed",
+                "updated_at": supervisor_state.updated_at
+            }

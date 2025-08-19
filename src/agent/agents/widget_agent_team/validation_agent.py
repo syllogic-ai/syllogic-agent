@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 from typing import List, Optional
 
-from langchain.chat_models import init_chat_model
+from langchain_openai import ChatOpenAI
 from langchain_core.messages import ToolMessage
 from langgraph.types import Command
 from pydantic import BaseModel, Field
@@ -77,9 +77,7 @@ class ValidationAgent:
             data_schema = self._analyze_data_structure(state.code_execution_result)
 
             # Create validation prompt for LLM
-            validation_llm = init_chat_model(
-                self.llm_model
-            ).with_structured_output(DataValidationResult)
+            validation_llm = ChatOpenAI(model="gpt-4o-mini").with_structured_output(DataValidationResult)
 
             validation_prompt = f"""
 You are a data validation expert specializing in sample-based quality assessment. Your task is to evaluate whether the generated data sample is "on the right track" and aligns with user requirements.

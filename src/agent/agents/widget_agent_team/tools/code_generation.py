@@ -1,15 +1,18 @@
 """Python code generation tool for widget processing."""
 
 import json
+import os
+import sys
 from typing import Annotated
 
-from langchain.chat_models import init_chat_model
+from langchain_openai import ChatOpenAI
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import InjectedToolCallId, tool
 from langgraph.prebuilt import InjectedState
 from langgraph.types import Command
 
 from agent.models import WidgetAgentState
+
 from actions.utils import get_chart_config_schema_string
 
 
@@ -61,7 +64,7 @@ def generate_python_code_tool(
         chart_config_schema = get_chart_config_schema_string()
 
         # Create a code generation agent
-        code_gen_llm = init_chat_model("openai:gpt-5")
+        code_gen_llm = ChatOpenAI(model="gpt-4o-mini")
 
         code_generation_prompt = f"""
 You are a Python data analysis expert specializing in pandas and data manipulation. Given a dataset schema, sample data, and a user's request, generate valid Python code to analyze and manipulate the data for the specified widget type and operation.

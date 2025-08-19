@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 from typing import Any, Dict
 
-from langchain.chat_models import init_chat_model
+from langchain_openai import ChatOpenAI
 from langgraph.graph import END
 from langgraph.types import Command
 
@@ -16,7 +16,7 @@ class WidgetSupervisor:
 
     def __init__(self, llm_model: str = "openai:gpt-4o-mini"):
         """Initialize the supervisor with LLM."""
-        self.llm = init_chat_model(llm_model)
+        self.llm = ChatOpenAI(model="gpt-4o-mini")
         self.llm_with_structure = self.llm.with_structured_output(SupervisorDecision)
 
     def analyze_state(self, state: WidgetAgentState) -> Dict[str, Any]:
