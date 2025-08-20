@@ -11,6 +11,18 @@ from pydantic import BaseModel, Field
 
 from agent.models import WidgetAgentState
 
+# Handle imports for different execution contexts
+try:
+    from actions.prompts import compile_prompt, get_prompt_config
+except ImportError:
+    import sys
+    import os
+    # Add the src directory to the path
+    src_path = os.path.join(os.path.dirname(__file__), '..', '..', '..')
+    if src_path not in sys.path:
+        sys.path.insert(0, src_path)
+    from actions.prompts import compile_prompt, get_prompt_config
+
 
 class DataValidationResult(BaseModel):
     """Structured output for data validation assessment"""
@@ -34,8 +46,36 @@ class ValidationAgent:
     """LLM-based validation agent for widget data quality assessment."""
 
     def __init__(self, llm_model: str = "openai:gpt-4o-mini"):
-        """Initialize validation agent with LLM."""
-        self.llm_model = llm_model
+        """Initialize validation agent with LLM configuration from Langfuse."""
+        # Fetch model configuration from Langfuse (REQUIRED)
+        try:
+            import logging
+            logger = logging.getLogger(__name__)
+            
+            logger.info("Fetching model configuration from Langfuse for validate_data...")
+            prompt_config = get_prompt_config("widget_agent_team/validate_data", label="latest")
+            
+            # Extract required model and temperature from Langfuse config
+            model = prompt_config.get("model")
+            temperature = prompt_config.get("temperature")
+            
+            # Validate required configuration
+            if not model:
+                raise ValueError("Model configuration is missing or empty in Langfuse prompt config")
+            if temperature is None:
+                raise ValueError("Temperature configuration is missing in Langfuse prompt config")
+            
+            logger.info(f"✅ Using Langfuse model config - model: {model}, temperature: {temperature}")
+            
+            # Store configuration for validation operations
+            self.model = model
+            self.temperature = temperature
+            
+        except Exception as e:
+            error_msg = f"Failed to initialize ValidationAgent - cannot fetch model config from Langfuse: {str(e)}"
+            import logging
+            logging.getLogger(__name__).error(error_msg)
+            raise RuntimeError(error_msg) from e
 
     def validate_data(self, state: WidgetAgentState) -> Command:
         """LLM-based validation that analyzes generated data against user requirements."""
@@ -76,54 +116,65 @@ class ValidationAgent:
             # Get data schema information
             data_schema = self._analyze_data_structure(state.code_execution_result)
 
-            # Create validation prompt for LLM
-            validation_llm = ChatOpenAI(model="gpt-4o-mini").with_structured_output(DataValidationResult)
+            # Fetch and compile validation prompt from Langfuse with dynamic variables
+            try:
+                import logging
+                logger = logging.getLogger(__name__)
+                
+                # Extract sampling information for variables
+                sampling_info = sample_data.get("_sampling_info", {})
+                
+                # Prepare runtime variables for Langfuse prompt compilation
+                prompt_variables = {
+                    "task_instructions": state.task_instructions,
+                    "user_prompt": state.user_prompt,
+                    "widget_type": state.widget_type,
+                    "operation": state.operation,
+                    "sample_data": json.dumps(sample_data, indent=2, default=str),
+                    "data_schema": json.dumps(data_schema, indent=2),
+                    "sample_data_original_count": sampling_info.get("original_count", "unknown"),
+                    "sample_data_sampled_count": sampling_info.get("sampled_count", "unknown"),
+                    "sample_data_is_sampled": sampling_info.get("is_sampled", "unknown")
+                }
+                
+                logger.info("Fetching and compiling validation prompt from Langfuse...")
+                
+                # Compile the prompt with dynamic variables from Langfuse (REQUIRED)
+                validation_prompt = compile_prompt(
+                    "widget_agent_team/validate_data", 
+                    prompt_variables,
+                    label="latest"
+                )
+                
+                # Validate compiled prompt (handle different formats)
+                if not validation_prompt:
+                    raise ValueError("Compiled validation prompt from Langfuse is empty or None")
+                
+                # Convert to string if needed and validate
+                validation_prompt_str = str(validation_prompt)
+                if not validation_prompt_str or len(validation_prompt_str.strip()) == 0:
+                    raise ValueError("Compiled validation prompt from Langfuse is empty or invalid")
+                
+                logger.info(f"✅ Successfully compiled Langfuse validation prompt with {len(prompt_variables)} variables")
+                
+                # Use the compiled prompt
+                validation_prompt = validation_prompt_str
+                
+            except Exception as e:
+                error_msg = f"Failed to fetch/compile validation prompt from Langfuse: {str(e)}"
+                import logging
+                logging.getLogger(__name__).error(error_msg)
+                return Command(
+                    goto="widget_supervisor",
+                    update={
+                        "error_messages": state.error_messages + [error_msg],
+                        "data_validated": False,
+                        "updated_at": datetime.now(),
+                    },
+                )
 
-            validation_prompt = f"""
-You are a data validation expert specializing in sample-based quality assessment. Your task is to evaluate whether the generated data sample is "on the right track" and aligns with user requirements.
-
-⚠️ CRITICAL CONTEXT: You are analyzing only a SAMPLE (first 10 records) of what may be a much larger dataset. Do NOT penalize for missing data points that aren't in the sample - focus on whether the sample demonstrates correct alignment.
-
-TASK DESCRIPTION: {state.task_instructions}
-USER PROMPT: {state.user_prompt}
-WIDGET TYPE: {state.widget_type}
-OPERATION: {state.operation}
-
-GENERATED CHART CONFIG SAMPLE (first 10 records only):
-{json.dumps(sample_data, indent=2, default=str)}
-
-CHART CONFIG ANALYSIS:
-{json.dumps(data_schema, indent=2)}
-
-SAMPLE CONTEXT:
-Original dataset: {sample_data.get("_sampling_info", {}).get("original_count", "unknown")} records
-Sample shown: {sample_data.get("_sampling_info", {}).get("sampled_count", "unknown")} records
-Is sampled: {sample_data.get("_sampling_info", {}).get("is_sampled", "unknown")}
-
-EVALUATION CRITERIA (Sample-Based):
-✅ Structure Validation: Is the ChartConfigSchema properly formed with all required fields?
-✅ Data Alignment: Do the sample records match the user's request (correct field names, logical values)?
-✅ Chart Configuration: Are chartConfig mappings sensible for the data fields present?
-✅ Axis Setup: Is xAxisConfig.dataKey pointing to a valid field that exists in the sample?
-✅ Metadata Quality: Are title/description relevant and descriptive?
-✅ Data Logic: Does the sample data follow patterns that make sense for the request?
-
-VALIDATION APPROACH:
-- HIGH CONFIDENCE (85+): Sample clearly demonstrates correct approach, structure, and alignment
-- MEDIUM CONFIDENCE (70-84): Sample shows mostly correct approach with minor issues
-- LOW CONFIDENCE (<70): Sample has structural problems or clear misalignment
-
-KEY PRINCIPLE: If the sample is well-structured and shows the right data patterns, assume the full dataset follows the same logic. Do NOT reduce confidence just because you're seeing a subset.
-
-Provide:
-- is_valid: Boolean - true if sample demonstrates correct direction and structure
-- confidence_level: 0-100 score based on sample quality and alignment (not completeness)
-- explanation: Focus on whether the sample indicates success for the full dataset
-- missing_requirements: Only list structural/configuration issues visible in the sample
-- data_quality_issues: Only list problems evident in the actual sample data shown
-
-Remember: You're validating the APPROACH and QUALITY, not the completeness!
-"""
+            # Create validation LLM with Langfuse configuration
+            validation_llm = ChatOpenAI(model=self.model, temperature=self.temperature).with_structured_output(DataValidationResult)
 
             # Get validation result from LLM
             validation_result = validation_llm.invoke(validation_prompt)

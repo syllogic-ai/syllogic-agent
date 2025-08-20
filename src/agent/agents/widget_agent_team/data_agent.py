@@ -13,13 +13,89 @@ from .tools.fetch_data import fetch_data_tool
 from .tools.code_generation import generate_python_code_tool
 from .tools.code_execution import e2b_sandbox_tool
 
+# Handle imports for different execution contexts
+try:
+    from actions.prompts import retrieve_prompt, get_prompt_config
+except ImportError:
+    import sys
+    import os
+    # Add the src directory to the path
+    src_path = os.path.join(os.path.dirname(__file__), '..', '..', '..')
+    if src_path not in sys.path:
+        sys.path.insert(0, src_path)
+    from actions.prompts import retrieve_prompt, get_prompt_config
+
 
 class DataAgent:
     """Data processing agent using create_react_agent."""
 
     def __init__(self, llm_model: str = "openai:gpt-4o-mini"):
-        """Initialize data agent with LLM."""
-        self.llm_model = llm_model
+        """Initialize data agent with LLM configuration and prompts from Langfuse."""
+        
+        # Fetch model configuration and prompts from Langfuse (REQUIRED)
+        try:
+            import logging
+            logger = logging.getLogger(__name__)
+            
+            # Fetch main data processing prompt configuration
+            logger.info("Fetching model configuration from Langfuse for data_agent...")
+            main_prompt_config = get_prompt_config("widget_agent_team/data/data_node", label="latest")
+            
+            # Extract required model and temperature from main prompt config
+            model = main_prompt_config.get("model")
+            temperature = main_prompt_config.get("temperature")
+            
+            # Validate required configuration
+            if not model:
+                raise ValueError("Model configuration is missing or empty in Langfuse main prompt config")
+            if temperature is None:
+                raise ValueError("Temperature configuration is missing in Langfuse main prompt config")
+            
+            logger.info(f"✅ Using Langfuse model config - model: {model}, temperature: {temperature}")
+            
+            # Fetch main data processing prompt (REQUIRED)
+            logger.info("Fetching main data processing prompt from Langfuse...")
+            main_prompt_obj = retrieve_prompt("widget_agent_team/data/data_node", label="latest")
+            
+            # Handle different prompt formats
+            if hasattr(main_prompt_obj, 'prompt'):
+                main_prompt_content = main_prompt_obj.prompt
+                if isinstance(main_prompt_content, list):
+                    main_prompt = "\n".join([msg.get('content', str(msg)) for msg in main_prompt_content])
+                else:
+                    main_prompt = str(main_prompt_content)
+            else:
+                main_prompt = str(main_prompt_obj)
+            
+            # Validate main prompt
+            if not main_prompt or len(main_prompt.strip()) == 0:
+                raise ValueError("Main data processing prompt from Langfuse is empty or invalid")
+            
+            # Fetch code generator prompt (REQUIRED)
+            logger.info("Fetching code generator prompt from Langfuse...")
+            code_gen_prompt_obj = retrieve_prompt("widget_agent_team/data/tools/generate_python_code", label="latest")
+            
+            # Handle different prompt formats
+            if hasattr(code_gen_prompt_obj, 'prompt'):
+                code_gen_prompt_content = code_gen_prompt_obj.prompt
+                if isinstance(code_gen_prompt_content, list):
+                    code_gen_prompt = "\n".join([msg.get('content', str(msg)) for msg in code_gen_prompt_content])
+                else:
+                    code_gen_prompt = str(code_gen_prompt_content)
+            else:
+                code_gen_prompt = str(code_gen_prompt_obj)
+            
+            # Validate code generator prompt
+            if not code_gen_prompt or len(code_gen_prompt.strip()) == 0:
+                raise ValueError("Code generator prompt from Langfuse is empty or invalid")
+            
+            logger.info("✅ Successfully fetched both prompts from Langfuse")
+            
+        except Exception as e:
+            error_msg = f"Failed to initialize DataAgent - cannot fetch model config/prompts from Langfuse: {str(e)}"
+            import logging
+            logging.getLogger(__name__).error(error_msg)
+            raise RuntimeError(error_msg) from e
 
         # Create extended state schema that includes required AgentState fields
         # Define reducers for fields that might be updated concurrently
@@ -73,32 +149,25 @@ class DataAgent:
             created_at: datetime
             updated_at: Annotated[Optional[datetime], take_last]
 
-        # Create the main data processing agent with extended state schema
+        # Import ChatOpenAI to create properly configured models
+        from langchain_openai import ChatOpenAI
+        
+        # Create the main data processing agent with Langfuse configuration
         self.agent = create_react_agent(
-            model=llm_model,
+            model=ChatOpenAI(model=model, temperature=temperature),
             tools=[fetch_data_tool, generate_python_code_tool, e2b_sandbox_tool],
             state_schema=ExtendedWidgetState,
-            prompt="""You are a data processing agent for widget creation. Your job is to:
-            
-1. First, use fetch_data_tool (no parameters needed - extracts file_ids from state)
-2. Then, use generate_python_code_tool (no parameters needed - extracts requirements from state) 
-3. Finally, use e2b_sandbox_tool (no parameters needed - executes generated code from state)
-
-Always follow this sequence: fetch data → generate code → execute code.
-Make sure the final result matches the required format for the widget type.
-            """,
+            prompt=main_prompt,  # Use Langfuse prompt
         )
 
-        # Create code generation sub-agent
+        # Create code generation sub-agent with Langfuse configuration  
         self.code_generator_agent = create_react_agent(
-            model=llm_model,
+            model=ChatOpenAI(model=model, temperature=temperature),
             tools=[generate_python_code_tool],
-            prompt="""You are a specialized Python code generator for data visualization widgets. 
-            Generate clean, efficient Python code that transforms raw data into the exact format required for each widget type.
-            Focus on data manipulation using pandas and numpy when needed.
-            Always set your final result in a variable called 'result'.
-            """,
+            prompt=code_gen_prompt,  # Use Langfuse prompt
         )
+        
+        logger.info("✅ DataAgent successfully initialized with Langfuse prompts and configuration")
 
     def process_data(self, state: WidgetAgentState) -> Command:
         """Unified data processing using create_react_agent with proper state handling."""

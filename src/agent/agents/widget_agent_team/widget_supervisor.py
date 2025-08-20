@@ -10,14 +10,53 @@ from langgraph.types import Command
 
 from agent.models import SupervisorDecision, WidgetAgentState
 
+# Handle imports for different execution contexts
+try:
+    from actions.prompts import compile_prompt, get_prompt_config
+except ImportError:
+    import sys
+    import os
+    # Add the src directory to the path
+    src_path = os.path.join(os.path.dirname(__file__), '..', '..', '..')
+    if src_path not in sys.path:
+        sys.path.insert(0, src_path)
+    from actions.prompts import compile_prompt, get_prompt_config
+
 
 class WidgetSupervisor:
     """Intelligent supervisor that analyzes complete state and routes to appropriate nodes."""
 
     def __init__(self, llm_model: str = "openai:gpt-4o-mini"):
-        """Initialize the supervisor with LLM."""
-        self.llm = ChatOpenAI(model="gpt-4o-mini")
-        self.llm_with_structure = self.llm.with_structured_output(SupervisorDecision)
+        """Initialize the supervisor with LLM configuration from Langfuse."""
+        # Fetch model configuration from Langfuse (REQUIRED)
+        try:
+            import logging
+            logger = logging.getLogger(__name__)
+            
+            logger.info("Fetching model configuration from Langfuse for create_routing_prompt...")
+            prompt_config = get_prompt_config("widget_agent_team/widget_supervisor", label="latest")
+            
+            # Extract required model and temperature from Langfuse config
+            model = prompt_config.get("model")
+            temperature = prompt_config.get("temperature")
+            
+            # Validate required configuration
+            if not model:
+                raise ValueError("Model configuration is missing or empty in Langfuse prompt config")
+            if temperature is None:
+                raise ValueError("Temperature configuration is missing in Langfuse prompt config")
+            
+            logger.info(f"✅ Using Langfuse model config - model: {model}, temperature: {temperature}")
+            
+            # Initialize LLM with Langfuse configuration
+            self.llm = ChatOpenAI(model=model, temperature=temperature)
+            self.llm_with_structure = self.llm.with_structured_output(SupervisorDecision)
+            
+        except Exception as e:
+            error_msg = f"Failed to initialize WidgetSupervisor - cannot fetch model config from Langfuse: {str(e)}"
+            import logging
+            logging.getLogger(__name__).error(error_msg)
+            raise RuntimeError(error_msg) from e
 
     def analyze_state(self, state: WidgetAgentState) -> Dict[str, Any]:
         """Analyze the current state comprehensively, filtering large fields intelligently."""
@@ -158,72 +197,43 @@ class WidgetSupervisor:
         }
 
     def create_routing_prompt(self, state_analysis: Dict[str, Any]) -> str:
-        """Create comprehensive routing prompt for LLM supervisor."""
-        return f"""
-You are an intelligent supervisor managing a widget data processing and database persistence pipeline. 
-
-
-AVAILABLE NODES AND THEIR FUNCTIONS:
-1. "data" - Unified data processing node that:
-   - Fetches data from files if needed
-   - Generates Python code for data analysis/transformation
-   - Executes the code using E2B sandbox
-   - Returns structured ChartConfigSchema results
-
-2. "validate_data" - Data validation node that:
-   - Uses LLM to validate execution results against user requirements
-   - Provides confidence scoring (0-100%)
-   - Gives detailed feedback for improvements if validation fails
-   - Continues workflow to database operations if validation succeeds
-   - Never go to this node if we have concluded with the database operations node.
-
-3. "db_operations_node" - Database persistence node that:
-   - Handles CREATE/UPDATE/DELETE operations for widgets
-   - Uses create_widget, update_widget, delete_widget from dashboard.py
-   - Persists validated data to the database
-   - Marks task as completed after successful database operation
-   - If the operation is DELETE, you go to the database operations node immediately.
-   - After the database operations node, you should end the workflow.
-
-4. "__end__" - Workflow termination:
-   - Ends the workflow completely
-   - Should only be used when task is truly complete or unrecoverable
-
-ROUTING PHILOSOPHY:
-Your job is to analyze the current state and user request to determine the next logical step. Consider:
-
-- What the task instructions are (from task_instructions). You need to understand the instructions very well first and then make the best decision.
-- What work has been completed (from task_progress and handoff_messages) 
-- Which node just executed and what was the outcome (from previous_node_info)
-- What errors occurred and need addressing (from error_context)
-- A logical flow would be: data processing → validation → database operations → completion. However, you need to judge the situation and make the best decision. For example, if the operation is DELETE, you should go directly to the database operations node without data processing or validation. Therefore, everytime, you need to think the most appropriate logical flow and next step based on the operation type.
-
-PREVIOUS NODE CONTEXT:
-Pay special attention to the "previous_node_info" which tells you:
-- Which node just executed (previous_node)
-- Whether it succeeded or failed (outcome)
-- A summary of what happened (last_message_summary)
-This helps you understand the immediate context for your routing decision.
-
-IMPORTANT GUIDELINES:
-- Base decisions on the user's intent and current progress, not hardcoded rules
-- Use handoff messages to understand what just happened in the previous node
-- Consider error recovery strategies when there are failures
-- Route to database operations only after successful data validation
-- Use retry logic thoughtfully (max 3-4 iterations before giving up)
-- End the workflow only when the task is complete or clearly unrecoverable
-
-COMPLETION SIGNALS - When to choose "end":
-- If task_progress shows db_create_completed=true, db_update_completed=true, or db_delete_completed=true, the workflow MUST end immediately
-- If you get a successful message from the database operations node, you should end the workflow
-- Database operation completion means the ENTIRE TASK IS FINISHED - no further processing needed
-- CRITICAL: If any db_*_completed flag is true, you MUST route to "end" regardless of other state
-
-CURRENT STATE ANALYSIS:
-{json.dumps(state_analysis, indent=2)}
-
-Analyze the situation and make an intelligent routing decision with clear reasoning about why this next step makes sense for achieving the user's goal.
-"""
+        """Create comprehensive routing prompt for LLM supervisor from Langfuse."""
+        try:
+            import logging
+            logger = logging.getLogger(__name__)
+            
+            # Prepare runtime variables - link state_analysis with the Langfuse template
+            prompt_variables = {
+                "state_analysis": json.dumps(state_analysis, indent=2)
+            }
+            
+            logger.info("Fetching and compiling routing prompt from Langfuse...")
+            
+            # Compile the prompt with dynamic variables from Langfuse (REQUIRED)
+            routing_prompt = compile_prompt(
+                "widget_agent_team/widget_supervisor", 
+                prompt_variables,
+                label="latest"
+            )
+            
+            # Validate compiled prompt (handle different formats)
+            if not routing_prompt:
+                raise ValueError("Compiled routing prompt from Langfuse is empty or None")
+            
+            # Convert to string if needed and validate
+            routing_prompt_str = str(routing_prompt)
+            if not routing_prompt_str or len(routing_prompt_str.strip()) == 0:
+                raise ValueError("Compiled routing prompt from Langfuse is empty or invalid")
+            
+            logger.info(f"✅ Successfully compiled Langfuse routing prompt with {len(prompt_variables)} variables")
+            
+            return routing_prompt_str
+            
+        except Exception as e:
+            error_msg = f"Failed to fetch/compile routing prompt from Langfuse: {str(e)}"
+            import logging
+            logging.getLogger(__name__).error(error_msg)
+            raise RuntimeError(error_msg) from e
 
     def apply_business_rules(
         self, decision: SupervisorDecision, state: WidgetAgentState

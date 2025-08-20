@@ -21,6 +21,19 @@ from agent.models import TopLevelSupervisorState, WidgetAgentState, DelegatedTas
 from .tools.data_reader import get_available_data
 from .tools.task_manager import update_task_status, get_pending_tasks
 from .structured_output import SupervisorResponse, TaskCreationPlan, SupervisorDecision, TaskCreationRequest
+from actions.prompts import compile_prompt, get_prompt_config
+
+# Handle imports for different execution contexts
+try:
+    from actions.prompts import retrieve_prompt, get_prompt_config, get_prompt_with_fallback
+except ImportError:
+    import sys
+    import os
+    # Add the src directory to the path
+    src_path = os.path.join(os.path.dirname(__file__), '..', '..', '..')
+    if src_path not in sys.path:
+        sys.path.insert(0, src_path)
+    from actions.prompts import retrieve_prompt, get_prompt_config, get_prompt_with_fallback
 
 logger = logging.getLogger(__name__)
 
@@ -96,69 +109,69 @@ def plan_widget_tasks(
                 }
             )
         
-        # Use AI with structured output to create intelligent task plan
-        planning_llm = ChatOpenAI(model="gpt-4o-mini")
+        # Fetch model configuration and prompt from Langfuse (REQUIRED - no fallbacks)
+        try:
+            
+            # Prepare runtime variables from current state
+            prompt_variables = {
+                "user_prompt": state.user_prompt,
+                "data_summary": state.available_data_summary or "No data summary available",
+                "len_available_files": len(state.available_files),
+                "available_files": state.available_files,
+                "dashboard_id": state.dashboard_id,
+                "chat_id": state.chat_id
+            }
+            
+            # Fetch model configuration from Langfuse (REQUIRED)
+            logger.info("Fetching model configuration from Langfuse for plan_widget_tasks...")
+            prompt_config = get_prompt_config("top_level_supervisor/tools/plan_widget_tasks", label="latest")
+            
+            # Extract required model and temperature from Langfuse config
+            model = prompt_config.get("model")
+            temperature = prompt_config.get("temperature")
+            
+            # Validate required configuration
+            if not model:
+                raise ValueError("Model configuration is missing or empty in Langfuse prompt config")
+            if temperature is None:
+                raise ValueError("Temperature configuration is missing in Langfuse prompt config")
+            
+            logger.info(f"✅ Using Langfuse model config - model: {model}, temperature: {temperature}")
+            
+            # Compile the prompt with dynamic variables from Langfuse (REQUIRED)
+            planning_prompt = compile_prompt(
+                "top_level_supervisor/tools/plan_widget_tasks", 
+                prompt_variables,
+                label="latest"
+            )
+            
+            # Validate compiled prompt (handle different formats)
+            if not planning_prompt:
+                raise ValueError("Compiled prompt from Langfuse is empty or None")
+            
+            # Convert to string if needed and validate
+            planning_prompt_str = str(planning_prompt)
+            if not planning_prompt_str or len(planning_prompt_str.strip()) == 0:
+                raise ValueError("Compiled prompt from Langfuse is empty or invalid")
+            
+            # Use the string version for the LLM
+            planning_prompt = planning_prompt_str
+            
+            logger.info(f"✅ Successfully compiled Langfuse planning prompt with {len(prompt_variables)} variables")
+            
+        except Exception as e:
+            error_msg = f"Error in AI planning - failed to fetch prompt/config from Langfuse: {str(e)}"
+            logger.error(error_msg)
+            return Command(
+                update={
+                    "error_messages": state.error_messages + [error_msg],
+                    "messages": [ToolMessage(content=error_msg, tool_call_id=tool_call_id)],
+                }
+            )
+
+        # Initialize planning LLM with Langfuse configuration
+        planning_llm = ChatOpenAI(model=model, temperature=temperature)
         planning_llm_structured = planning_llm.with_structured_output(TaskCreationPlan)
-        
-        # Create focused planning prompt with emphasis on minimal task creation
-        planning_prompt = f"""
-You are an expert data visualization and dashboard planning AI. Analyze the user's request and available data to create a MINIMAL, targeted plan for widget creation.
-
-**USER REQUEST:**
-{state.user_prompt}
-
-**AVAILABLE DATA:**
-Data Summary: {state.available_data_summary or "No data summary available"}
-Available Files: {len(state.available_files)} file(s) 
-File IDs: {state.available_files}
-Dashboard ID: {state.dashboard_id}
-Chat ID: {state.chat_id}
-
-**CRITICAL TASK CREATION RULES:**
-🎯 **ONLY CREATE TASKS THAT DIRECTLY ANSWER THE USER QUERY**
-🎯 **NO NEED TO CREATE MULTIPLE OR TOO MANY WIDGETS IF THE USER QUERY CAN BE ANSWERED BY JUST ONE OR A COUPLE OF TASKS**
-🎯 **QUALITY OVER QUANTITY - PREFER FEWER, MORE FOCUSED WIDGETS**
-
-**MINIMAL PLANNING STRATEGY:**
-1. Identify the CORE question the user is asking
-2. Determine the MINIMUM number of widgets needed to answer that question
-3. Create ONLY the essential tasks - avoid "nice to have" widgets
-4. Each task must directly contribute to answering the user's specific request
-
-**WIDGET TYPE GUIDANCE:**
-- bar: Comparisons between categories, rankings, grouped data
-- line: Trends over time, time series analysis, progression  
-- pie: Parts of a whole, percentage breakdowns, composition
-- area: Cumulative values over time, stacked trends, volume
-- radial: Progress indicators, completion rates, gauges
-- kpi: Single important metrics, key performance numbers, summary stats
-- table: Detailed data exploration, multi-dimensional data, raw data display
-
-**FOCUSED TASK CREATION EXAMPLES:**
-- "Show me sales trends" → 1 line chart (STOP - that's sufficient)
-- "What's our revenue?" → 1 KPI widget (STOP - that answers it)
-- "Create a bar chart of products" → 1 bar chart (STOP - exactly what was requested)
-- "Compare this quarter vs last" → 1-2 widgets maximum (comparison chart + maybe summary KPI)
-
-**AVOID OVER-PLANNING:**
-❌ Don't create comprehensive dashboards unless explicitly requested
-❌ Don't add "supporting" widgets unless truly necessary
-❌ Don't create multiple views of the same data
-❌ Don't anticipate unstated user needs
-
-You must provide a structured TaskCreationPlan with:
-1. tasks: List of TaskCreationRequest objects (KEEP THIS MINIMAL!)
-2. strategy_summary: Explanation of why this minimal set answers the user's question
-3. duplicate_check: Confirmation no duplicates are being created
-
-For each task, ensure:
-- widget_type: Choose the most appropriate type based on data and purpose
-- operation: Always "CREATE" for new widgets  
-- title: Clear, specific title indicating the widget's purpose
-- description: What insights this widget provides to answer the user's question
-- file_ids: Use the available file IDs provided in the context
-- task_instructions: Detailed instructions for widget_agent_team execution
-"""
 
         # Get structured AI planning response
         task_plan = planning_llm_structured.invoke(planning_prompt)
@@ -480,100 +493,113 @@ supervisor_tools = [
 ]
 
 # Create the supervisor agent using create_react_agent with structured output
-def create_top_level_supervisor(model_name: str = "gpt-4o-mini"):
-    """Create the top-level supervisor agent with structured output."""
+def create_top_level_supervisor(model_name: Optional[str] = None):
+    """Create the top-level supervisor agent with Langfuse prompt and model configuration.
     
-    # Initialize OpenAI model following widget_agent_team pattern
-    model = ChatOpenAI(model=model_name)
+    This function REQUIRES Langfuse to be available and will fail if prompts or model 
+    configuration cannot be fetched from Langfuse.
     
-    system_prompt = """You are the Top Level Supervisor for a dashboard and widget management system.
-
-Your responsibilities:
-1. Analyze user requests and understand what they want to accomplish
-2. Read and understand available data sources 
-3. Create MINIMAL, focused widget plans that directly answer the user's question
-4. Delegate only essential tasks - avoid over-planning or unnecessary widgets
-5. Monitor task progress and coordinate between teams
-6. Provide structured responses about your progress and decisions
-
-Available Agent Teams:
-- widget_agent_team: Handles widget creation, updates, and deletion operations
-
-🎯 **CRITICAL TASK CREATION PHILOSOPHY:**
-**ONLY CREATE TASKS THAT DIRECTLY ANSWER THE USER QUERY**
-**NO NEED TO CREATE MULTIPLE OR TOO MANY WIDGETS IF THE USER QUERY CAN BE ANSWERED BY JUST ONE OR A COUPLE OF TASKS**
-
-MINIMAL TASK PLANNING RULES:
-1. NEVER create duplicate or redundant tasks
-2. Create the MINIMUM number of widgets needed to answer the user's question
-3. For specific requests (e.g., "create a bar chart"), create exactly one widget as requested
-4. For analytical questions, create only essential widgets - usually 1-2 maximum
-5. Avoid "comprehensive" or "supporting" widgets unless explicitly requested
-
-FOCUSED WIDGET STRATEGY:
-- Single chart request: Create exactly one widget (STOP - that's sufficient)
-- Data question: Create one primary visualization that answers it directly
-- Comparison request: Create one comparison widget (maybe + one summary KPI if essential)
-- Update/delete requests: Use context_widget_ids to identify target widgets
-- Avoid dashboard-style multi-widget responses unless user explicitly asks for a "dashboard"
-
-STRUCTURED OUTPUT REQUIREMENT:
-You MUST always provide responses in the specified structured format. Your response should include:
-- Current status (analyzing, planning, delegating, monitoring, completed, failed)
-- Clear human-readable message about what you're doing
-- Specific decision details when planning
-- Task creation plans when delegating
-- Summary of progress when monitoring
-
-WORKFLOW LOGIC - Follow this step by step:
-
-1. **DATA ANALYSIS PHASE** (status: "analyzing"):
-   - IF available_data_summary is empty or None, use analyze_available_data tool
-   - IF available_data_summary exists, proceed to step 2 (data analysis complete)
-
-2. **AI PLANNING PHASE** (status: "delegating"):
-   - IF no delegated_tasks exist yet, use plan_widget_tasks tool
-   - This AI-powered tool will analyze the user request and available data
-   - It creates multiple DelegatedTask objects as needed to fully answer the user's question
-   - The AI planning tool determines: widget types, titles, descriptions, and task instructions
-   - IF delegated_tasks already exist, skip to step 3 (planning already complete)
-
-3. **MONITORING PHASE** (status: "monitoring"):
-   - Use check_task_status to track task progress
-   - Use execute_widget_tasks to process pending tasks
-   
-4. **COMPLETION PHASE** (status: "completed"):
-   - Use finalize_response when all tasks are completed
-
-5. **ERROR HANDLING** (any status):
-   - Check tool_failure_counts and last_failed_tool to identify repeated failures
-   - If a tool has failed max_tool_retries times, use generate_error_response
-   - Otherwise, you may retry the failed tool if it makes sense
-   - Always consider whether retrying will help or if the issue is fundamental
-
-CRITICAL: You are an AI agent - use your intelligence to analyze the user's request and available data, then make smart decisions about which widgets to create. Check your current supervisor_status, available_data_summary, delegated_tasks, and tool_failure_counts before deciding what to do next!
-
-For each widget operation, you must specify:
-- operation: CREATE, UPDATE, or DELETE
-- widget_type: line, bar, pie, area, radial, kpi, or table (choose based on data and purpose)
-- title: Clear, specific widget title that indicates its purpose
-- description: Widget description explaining what insights it provides
-- file_ids: List of relevant file IDs from available data
-- widget_id: Required for UPDATE/DELETE operations (use context_widget_ids)
-
-MINIMAL DELEGATION EXAMPLES:
-- "Show me sales trends" → 1 line chart of sales over time (STOP - that answers it)
-- "Analyze our performance" → 1 primary performance chart (avoid multiple widgets unless essential)
-- "Update the revenue chart" → 1 UPDATE operation using provided widget_id
-- "What's our best selling product?" → 1 bar chart showing top products (avoid additional KPIs unless requested)
-- "Create a dashboard" → Multiple widgets allowed ONLY when user explicitly asks for "dashboard"
-
-Always think before delegating: Is this the MINIMUM needed to answer the user's question? Am I avoiding over-planning? Will this single widget (or minimal set) fully satisfy their request?
-
-IMPORTANT: Always respond with the structured SupervisorResponse format providing clear status, message, and relevant details."""
-
+    Raises:
+        RuntimeError: If Langfuse is not available or prompts cannot be fetched
+        ValueError: If fetched configuration is invalid or incomplete
+    """
+    
+    # Check if Langfuse is available
+    try:
+        from config import LANGFUSE_AVAILABLE
+        if not LANGFUSE_AVAILABLE:
+            raise RuntimeError(
+                "Langfuse is not available. Cannot create top_level_supervisor without Langfuse integration. "
+                "Please install langfuse: pip install langfuse"
+            )
+    except ImportError:
+        raise RuntimeError(
+            "Cannot import Langfuse configuration. Please ensure langfuse is installed and configured."
+        )
+    
+    try:
+        # Fetch prompt from Langfuse (REQUIRED)
+        logger.info("Fetching top_level_supervisor prompt from Langfuse...")
+        langfuse_prompt = retrieve_prompt("top_level_supervisor/top_level_supervisor", label="latest")
+        
+        # Handle different prompt formats (string or chat messages)
+        # Note: We get the raw prompt template here - variables will be injected at runtime
+        if hasattr(langfuse_prompt, 'prompt'):
+            prompt_content = langfuse_prompt.prompt
+            # If it's a list (chat messages), convert to string
+            if isinstance(prompt_content, list):
+                system_prompt = "\n".join([msg.get('content', str(msg)) for msg in prompt_content])
+            else:
+                system_prompt = str(prompt_content)
+        else:
+            system_prompt = str(langfuse_prompt)
+        
+        # Store the raw langfuse prompt for runtime compilation with variables
+        raw_langfuse_prompt = langfuse_prompt
+        
+        # Ensure prompt is a string before validation
+        if not isinstance(system_prompt, str):
+            logger.warning(f"System prompt is not a string, converting: {type(system_prompt)}")
+            if isinstance(system_prompt, list):
+                system_prompt = "\n".join([str(item) for item in system_prompt])
+            else:
+                system_prompt = str(system_prompt)
+        
+        # Validate prompt content
+        if not system_prompt or len(system_prompt.strip()) == 0:
+            raise ValueError("Retrieved prompt from Langfuse is empty or invalid")
+            
+    except Exception as e:
+        error_msg = f"Failed to fetch prompt 'top_level_supervisor' from Langfuse: {str(e)}"
+        logger.error(error_msg)
+        raise RuntimeError(error_msg) from e
+    
+    try:
+        # Fetch model configuration from Langfuse (REQUIRED)
+        logger.info("Fetching model configuration from Langfuse...")
+        prompt_config = get_prompt_config("top_level_supervisor/top_level_supervisor", label="latest")
+        
+        # Extract required configuration
+        model = prompt_config.get("model")
+        temperature = prompt_config.get("temperature")
+        
+        # Validate configuration
+        if not model:
+            raise ValueError("Model configuration is missing or empty in Langfuse prompt config")
+        if temperature is None:
+            raise ValueError("Temperature configuration is missing in Langfuse prompt config")
+            
+        # Override model if explicitly provided
+        if model_name:
+            logger.info(f"Overriding Langfuse model '{model}' with provided model '{model_name}'")
+            model = model_name
+            
+        logger.info(f"✅ Using Langfuse configuration - model: {model}, temperature: {temperature}")
+        
+    except Exception as e:
+        error_msg = f"Failed to fetch model configuration from Langfuse: {str(e)}"
+        logger.error(error_msg)
+        raise RuntimeError(error_msg) from e
+    
+    # system_prompt is already validated and converted to string above
+    
+    try:
+        # Initialize the language model with Langfuse configuration
+        llm = ChatOpenAI(
+            model=model,
+            temperature=temperature
+        )
+        
+        logger.info(f"Creating supervisor with prompt length: {len(system_prompt)}")
+        
+    except Exception as e:
+        error_msg = f"Failed to initialize ChatOpenAI with Langfuse configuration (model: {model}, temperature: {temperature}): {str(e)}"
+        logger.error(error_msg)
+        raise RuntimeError(error_msg) from e
+    
+    # Create the react agent with Langfuse-managed prompt
     return create_react_agent(
-        model=model,  # Use the properly initialized ChatOpenAI model
+        model=llm,
         tools=supervisor_tools,
         prompt=system_prompt,
         state_schema=TopLevelSupervisorState  # Specify the state schema for InjectedState
