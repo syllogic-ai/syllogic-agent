@@ -12,6 +12,14 @@ from dotenv import load_dotenv
 from e2b_code_interpreter import Sandbox
 from supabase import Client, create_client
 
+# Import langfuse conditionally to avoid breaking the system when not available
+try:
+    from langfuse import Langfuse
+    LANGFUSE_AVAILABLE = True
+except ImportError:
+    Langfuse = None
+    LANGFUSE_AVAILABLE = False
+
 # Load environment variables from .env file
 load_dotenv()
 
@@ -22,6 +30,9 @@ _supabase_client: Optional[Client] = None
 
 # Global E2B sandbox configuration
 _e2b_api_key: Optional[str] = None
+
+# Global Langfuse client instance
+_langfuse_client: Optional["Langfuse"] = None
 
 
 def get_supabase_client() -> Client:
@@ -141,6 +152,100 @@ def reset_e2b_config():
     logger.info("E2B configuration reset")
 
 
+def get_langfuse_client() -> Optional["Langfuse"]:
+    """Get or create the Langfuse client instance.
+
+    Returns:
+        Langfuse: Initialized Langfuse client or None if langfuse not available
+
+    Raises:
+        ValueError: If required environment variables are not set
+        Exception: If client initialization fails
+    """
+    global _langfuse_client
+
+    if not LANGFUSE_AVAILABLE:
+        raise ImportError("Langfuse is not available. Install with: pip install langfuse")
+
+    if _langfuse_client is not None:
+        return _langfuse_client
+
+    try:
+        # Get environment variables
+        langfuse_secret_key = os.getenv("LANGFUSE_SECRET_KEY")
+        langfuse_public_key = os.getenv("LANGFUSE_PUBLIC_KEY")
+        langfuse_host = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
+
+        if not langfuse_secret_key:
+            raise ValueError("LANGFUSE_SECRET_KEY environment variable is required")
+        if not langfuse_public_key:
+            raise ValueError("LANGFUSE_PUBLIC_KEY environment variable is required")
+
+        # Create client
+        _langfuse_client = Langfuse(
+            secret_key=langfuse_secret_key,
+            public_key=langfuse_public_key,
+            host=langfuse_host
+        )
+
+        # Verify authentication
+        if _langfuse_client.auth_check():
+            logger.info("Langfuse client initialized and authenticated successfully")
+        else:
+            logger.warning("Langfuse client initialized but authentication check failed")
+
+        return _langfuse_client
+
+    except Exception as e:
+        logger.error(f"Failed to initialize Langfuse client: {str(e)}")
+        raise
+
+
+def reset_langfuse_client():
+    """Reset the global Langfuse client instance.
+
+    Useful for testing or when credentials change.
+    """
+    global _langfuse_client
+    _langfuse_client = None
+    logger.info("Langfuse client reset")
+
+
+def get_prompt(prompt_name: str, version: Optional[int] = None, label: Optional[str] = None):
+    """Get a prompt from Langfuse.
+
+    Args:
+        prompt_name: Name of the prompt to retrieve
+        version: Specific version number (optional)
+        label: Specific label to retrieve (optional, e.g., "production")
+
+    Returns:
+        Langfuse prompt object
+
+    Raises:
+        Exception: If prompt retrieval fails or langfuse not available
+    """
+    try:
+        if not LANGFUSE_AVAILABLE:
+            raise ImportError("Langfuse is not available. Install with: pip install langfuse")
+
+        langfuse_client = get_langfuse_client()
+        
+        if version is not None:
+            prompt = langfuse_client.get_prompt(prompt_name, version=version)
+        elif label is not None:
+            prompt = langfuse_client.get_prompt(prompt_name, label=label)
+        else:
+            prompt = langfuse_client.get_prompt(prompt_name)
+        
+        logger.info(f"Retrieved prompt '{prompt_name}' successfully")
+        return prompt
+
+    except Exception as e:
+        logger.error(f"Failed to retrieve prompt '{prompt_name}': {str(e)}")
+        raise
+
+
 # Initialize client on module import
 try:
     get_supabase_client()
@@ -155,6 +260,16 @@ except Exception as e:
     logger.warning(f"Could not initialize E2B API key on import: {str(e)}")
     # Don't raise here - let functions handle the error when they try to use E2B
 
+# Initialize Langfuse client on module import (only if available)
+if LANGFUSE_AVAILABLE:
+    try:
+        get_langfuse_client()
+    except Exception as e:
+        logger.warning(f"Could not initialize Langfuse client on import: {str(e)}")
+        # Don't raise here - let functions handle the error when they try to use Langfuse
+else:
+    logger.info("Langfuse not available - skipping initialization")
+
 
 # Export public functions
 __all__ = [
@@ -163,4 +278,8 @@ __all__ = [
     "get_e2b_api_key",
     "create_e2b_sandbox",
     "reset_e2b_config",
+    "get_langfuse_client",
+    "reset_langfuse_client",
+    "get_prompt",
+    "LANGFUSE_AVAILABLE",
 ]

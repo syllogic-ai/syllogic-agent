@@ -2,9 +2,11 @@
 
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Annotated, Sequence
 
 from pydantic import BaseModel, Field
+from langchain_core.messages import BaseMessage
+from langgraph.graph.message import add_messages
 
 
 class CreateWidgetInput(BaseModel):
@@ -55,6 +57,9 @@ class BackendPayload(BaseModel):
     dashboard_id: str = Field(description="Dashboard to work with")
     context_widget_ids: Optional[List[str]] = Field(
         default=None, description="Existing widgets user is referencing"
+    )
+    file_ids: List[str] = Field(
+        default_factory=list, description="File IDs available for widget creation"
     )
     chat_id: str = Field(description="For conversation continuity")
     request_id: str = Field(description="For logging/tracking")
@@ -381,3 +386,114 @@ class Job(BaseModel):
     completed_at: Optional[str] = Field(
         default=None, description="ISO timestamp when job was completed"
     )
+
+
+# Top Level Supervisor Models
+
+
+class DelegatedTask(BaseModel):
+    """A task that has been delegated to a specialized agent team."""
+    
+    task_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    target_agent: Literal["widget_agent_team"] = Field(
+        description="Which agent team should handle this task"
+    )
+    task_instructions: str = Field(description="Detailed instructions for the task")
+    task_status: Literal["pending", "in_progress", "completed", "failed"] = Field(
+        default="pending"
+    )
+    
+    # Widget-specific task data
+    widget_type: Literal["line", "bar", "pie", "area", "radial", "kpi", "table"] = Field(
+        description="Type of widget to create/update/delete"
+    )
+    operation: Literal["CREATE", "UPDATE", "DELETE"] = Field(
+        description="Widget operation to perform"
+    )
+    file_ids: List[str] = Field(
+        default_factory=list, description="File IDs to use for the widget"
+    )
+    widget_id: Optional[str] = Field(
+        default=None, description="Widget ID for UPDATE/DELETE operations or context reference"
+    )
+    
+    # Additional widget task fields (these contain all needed data for widget_agent_team)
+    title: str = Field(description="Widget title")
+    description: str = Field(description="Widget description")
+    user_prompt: str = Field(description="Original user request")
+    dashboard_id: str = Field(description="Dashboard ID where widget will be created")
+    chat_id: str = Field(description="Chat ID for context")
+    
+    # Task results
+    result: Optional[str] = Field(default=None, description="Task result summary message")
+    error_message: Optional[str] = Field(default=None, description="Error if task failed")
+    
+    # Timestamps
+    created_at: datetime = Field(default_factory=datetime.now)
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+
+
+class TopLevelSupervisorState(BaseModel):
+    """State for the top-level supervisor that orchestrates all agent teams."""
+    
+    # Required LangGraph agent fields
+    messages: Annotated[List[BaseMessage], add_messages] = Field(
+        default_factory=list, description="Message history for the conversation"
+    )
+    remaining_steps: int = Field(default=10, description="Remaining steps for task execution")
+    
+    # MINIMUM REQUIRED INPUT - Only these two fields are required
+    user_prompt: str = Field(description="Original user request")
+    dashboard_id: str = Field(description="Dashboard context for the request")
+    
+    # Optional request information - auto-generated if not provided
+    user_id: str = Field(default_factory=lambda: f"user_{uuid.uuid4().hex[:8]}", description="ID of the user making the request")
+    chat_id: str = Field(default_factory=lambda: f"chat_{uuid.uuid4().hex[:8]}", description="Chat ID for conversation continuity")
+    request_id: str = Field(default_factory=lambda: f"req_{uuid.uuid4().hex[:8]}", description="Unique identifier for this request")
+    
+    # Optional context from backend payload
+    file_ids: List[str] = Field(default_factory=list, description="File IDs from backend payload (optional - discovered if not provided)")
+    context_widget_ids: Optional[List[str]] = Field(
+        default=None, description="Existing widgets user is referencing (optional)"
+    )
+    
+    # Available data context
+    available_files: List[str] = Field(default_factory=list, description="List of available file IDs")
+    file_schemas: List[Dict[str, Any]] = Field(default_factory=list, description="Detailed file schema information")
+    available_data_summary: Optional[str] = Field(
+        default=None, description="Summary of available data for analysis"
+    )
+    
+    # Task management
+    delegated_tasks: List[DelegatedTask] = Field(
+        default_factory=list, description="Tasks delegated to specialized agents"
+    )
+    current_reasoning: Optional[str] = Field(
+        default=None, description="Current reasoning and analysis"
+    )
+    
+    # Status tracking
+    supervisor_status: Literal["analyzing", "delegating", "monitoring", "completed", "failed"] = Field(
+        default="analyzing"
+    )
+    all_tasks_completed: bool = Field(default=False)
+    
+    # Results
+    final_response: Optional[str] = Field(
+        default=None, description="Final response to the user"
+    )
+    error_messages: List[str] = Field(default_factory=list)
+    
+    # Error handling and retry tracking
+    tool_failure_counts: Dict[str, int] = Field(default_factory=dict, description="Count of failures per tool")
+    max_tool_retries: int = Field(default=3, description="Maximum retries per tool before giving up")
+    last_failed_tool: Optional[str] = Field(default=None, description="Name of the last tool that failed")
+    
+    # Timestamps
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: Optional[datetime] = None
+    
+    class Config:
+        arbitrary_types_allowed = True
+        use_enum_values = True

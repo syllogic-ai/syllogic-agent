@@ -11,8 +11,8 @@ from langgraph.prebuilt import InjectedState
 from langgraph.types import Command
 
 from agent.models import ChartConfigSchema, WidgetAgentState
-from actions.utils import analyze_schema_validation_error
-from actions.utils import import_config
+
+from actions.utils import analyze_schema_validation_error, import_config
 
 
 def create_e2b_sandbox():
