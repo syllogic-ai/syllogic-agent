@@ -156,8 +156,14 @@ class WidgetSupervisor:
         if any(pattern in tool_call_id for pattern in ['fetch_data', 'generate_python_code', 'e2b_sandbox']):
             return "data"
             
+        # Text block node patterns
+        if any(pattern in tool_call_id for pattern in ['text_block', 'generate_text_content', 'fetch_widget_details']):
+            return "text_block_node"
+            
         # Check for other common patterns
-        if 'fetch' in tool_call_id or 'data' in tool_call_id:
+        if 'text_block' in tool_call_id or 'text' in tool_call_id:
+            return "text_block_node"
+        elif 'fetch' in tool_call_id or 'data' in tool_call_id:
             return "data"
         elif 'validate' in tool_call_id or 'validation' in tool_call_id:
             return "validate_data"

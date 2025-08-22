@@ -29,6 +29,7 @@ from agent.agents.widget_agent_team.worker_nodes import (
     data_node,
     validate_data_node,
     db_operations_node,
+    text_block_node,
 )
 from agent.agents.top_level_supervisor.top_level_supervisor import top_level_supervisor
 from agent.models import WidgetAgentState, TopLevelSupervisorState, DelegatedTask
@@ -107,6 +108,7 @@ def build_widget_agent_graph():
     builder.add_node("data", data_node)
     builder.add_node("validate_data", validate_data_node)
     builder.add_node("db_operations_node", db_operations_node)
+    builder.add_node("text_block_node", text_block_node)
 
     # Define entry point - START goes to widget_supervisor
     builder.add_edge(START, "widget_supervisor")

@@ -6,6 +6,7 @@ from agent.models import WidgetAgentState
 from .data_agent import DataAgent
 from .validation_agent import ValidationAgent
 from .database_agent import DatabaseAgent
+from .text_block_agent import TextBlockAgent
 from .tools.fetch_data import fetch_data_tool
 from .tools.code_generation import generate_python_code_tool
 from .tools.code_execution import e2b_sandbox_tool
@@ -22,6 +23,7 @@ class WorkerNodes:
         self.data_agent = DataAgent(llm_model)
         self.validation_agent = ValidationAgent(llm_model)
         self.database_agent = DatabaseAgent()
+        self.text_block_agent = TextBlockAgent(llm_model)
 
     def data_node(self, state: WidgetAgentState) -> Command:
         """Unified data processing node using create_react_agent with proper state handling."""
@@ -37,6 +39,13 @@ class WorkerNodes:
         Uses create_widget, update_widget, delete_widget from dashboard.py.
         """
         return self.database_agent.perform_db_operations(state)
+
+    def text_block_node(self, state: WidgetAgentState) -> Command:
+        """
+        Text block generation node that creates HTML content for text block widgets.
+        Uses Langfuse prompts and LLM configuration.
+        """
+        return self.text_block_agent.generate_text_block(state)
 
 
 # Create lazy singleton instance
@@ -67,6 +76,11 @@ def db_operations_node(state: WidgetAgentState) -> Command:
     return get_worker_nodes().db_operations_node(state)
 
 
+def text_block_node(state: WidgetAgentState) -> Command:
+    """Lazy wrapper for text_block_node."""
+    return get_worker_nodes().text_block_node(state)
+
+
 # Export tools and nodes
 __all__ = [
     "fetch_data_tool",
@@ -75,6 +89,7 @@ __all__ = [
     "data_node",
     "validate_data_node",
     "db_operations_node",
+    "text_block_node",
     "get_worker_nodes",
     "WorkerNodes",
 ]
