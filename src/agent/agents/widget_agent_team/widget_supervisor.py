@@ -112,6 +112,7 @@ class WidgetSupervisor:
                 "has_raw_data": state.raw_file_data is not None,
                 "has_generated_code": state.generated_code is not None,
                 "has_execution_result": state.code_execution_result is not None,
+                "has_widget_config": state.widget_config is not None,  # Unified config ready for validation
                 "is_validated": state.data_validated,
                 "has_errors": len(state.error_messages) > 0,
                 "iteration_count": state.iteration_count,

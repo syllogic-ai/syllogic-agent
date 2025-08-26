@@ -85,6 +85,7 @@ def build_widget_agent_graph():
         file_sample_data: List[dict]
         generated_code: Optional[str]
         code_execution_result: Optional[dict]
+        widget_config: Optional[dict]  # Unified config for both text blocks and charts
         data: Optional[dict]
         data_validated: bool
         widget_metadata: Optional[dict]

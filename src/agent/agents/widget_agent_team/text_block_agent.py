@@ -324,19 +324,18 @@ Requirements:
             else:
                 generated_content = str(result)
             
-            # Create the widget configuration for later database update
+            # Create the unified widget configuration for validation and database persistence
             widget_config = {
                 "content": generated_content
             }
             
             logger.info(f"✅ Successfully generated text block content for widget {state.widget_id}")
             
-            # Return to widget_supervisor with generated content - do NOT update database here
+            # Return to widget_supervisor with widget_config (NOT generated_code for text blocks)
             return Command(
                 goto="widget_supervisor",
                 update={
-                    "generated_code": generated_content,
-                    "widget_config": widget_config,
+                    "widget_config": widget_config,  # Unified config format for validation
                     "task_status": "in_progress",  # Still in progress, not completed
                     "updated_at": datetime.now(),
                 }

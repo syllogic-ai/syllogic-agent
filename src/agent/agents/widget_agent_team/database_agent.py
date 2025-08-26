@@ -50,8 +50,8 @@ class DatabaseAgent:
             if operation == "DELETE":
                 title = state.title
             else:
-                # For CREATE/UPDATE, try to get title from code_execution_result if available
-                title = state.code_execution_result.get("title", state.title) if state.code_execution_result else state.title
+                # For CREATE/UPDATE, try to get title from widget_config if available
+                title = state.widget_config.get("title", state.title) if state.widget_config else state.title
             
             # Use widget_type from state
             widget_type = state.widget_type
@@ -65,16 +65,16 @@ class DatabaseAgent:
                 if not widget_id:
                     widget_id = f"wid_{str(uuid.uuid4())}"
                 
-                # Create widget input
+                # Create widget input using unified widget_config
                 create_input = CreateWidgetInput(
                     dashboard_id=dashboard_id,
                     title=title,
                     widget_type=widget_type,
-                    config=state.code_execution_result or {},  # Pass full code_execution_result as config or empty dict
+                    config=state.widget_config or {},  # Use unified widget_config
                     widget_id=widget_id,  # Pass the widget_id to be used
                     chat_id=state.chat_id,
                     description=state.description,
-                    data={"data": state.code_execution_result.get("data", []) if state.code_execution_result else []},  # Wrap data array in dictionary
+                    data={"data": state.widget_config.get("data", []) if state.widget_config else []},  # Extract data from widget_config
                 )
                 
                 # Create widget in database
@@ -97,15 +97,14 @@ class DatabaseAgent:
                 )
                 
             elif operation == "UPDATE":
-                # Update existing widget
+                # Update existing widget using unified widget_config
                 update_input = UpdateWidgetInput(
                     widget_id=state.widget_id,
                     title=title,
                     widget_type=widget_type,
-                    config=state.code_execution_result or {},  # Pass full code_execution_result as config or empty dict
-                    chat_id=state.chat_id,
+                    config=state.widget_config or {},  # Use unified widget_config
                     description=state.description,
-                    data={"data": state.code_execution_result.get("data", []) if state.code_execution_result else []},  # Wrap data array in dictionary
+                    data={"data": state.widget_config.get("data", []) if state.widget_config else []},  # Extract data from widget_config
                 )
                 
                 # Update widget in database

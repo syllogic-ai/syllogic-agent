@@ -154,6 +154,11 @@ class WidgetAgentState(BaseModel):
     raw_file_data: Optional[Dict[str, Any]] = None
     generated_code: Optional[str] = None
     code_execution_result: Optional[Any] = None
+    widget_config: Optional[Dict[str, Any]] = Field(
+        default=None, 
+        description="Unified widget configuration ready for validation and database persistence. "
+                   "For text blocks: {'content': html_string}. For charts: ChartConfigSchema result."
+    )
     error_messages: List[str] = Field(default_factory=list)
     iteration_count: int = 0
     current_step: Optional[str] = None

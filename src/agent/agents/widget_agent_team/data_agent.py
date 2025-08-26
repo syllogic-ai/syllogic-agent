@@ -220,6 +220,7 @@ Please:
                 "raw_file_data": state.raw_file_data,
                 "generated_code": state.generated_code,
                 "code_execution_result": state.code_execution_result,
+                "widget_config": state.widget_config,  # Include unified config
                 "error_messages": state.error_messages or [],
                 "iteration_count": state.iteration_count,
                 "current_step": state.current_step,
@@ -272,6 +273,12 @@ Please:
                 update_dict["code_execution_result"] = agent_result[
                     "code_execution_result"
                 ]
+                
+                # Also create unified widget_config from successful execution result
+                execution_result = agent_result["code_execution_result"]
+                if isinstance(execution_result, dict) and "error" not in execution_result:
+                    # For charts, the widget_config is the ChartConfigSchema result from execution
+                    update_dict["widget_config"] = execution_result
             if (
                 "error_messages" in agent_result
                 and agent_result["error_messages"] is not None

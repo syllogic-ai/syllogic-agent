@@ -83,21 +83,23 @@ class ValidationAgent:
         """LLM-based validation that analyzes generated data against user requirements."""
 
         try:
-            # Check if we have execution result
-            if state.code_execution_result is None:
+            # Check if we have widget config ready for validation
+            if state.widget_config is None:
                 return Command(
                     goto="widget_supervisor",
                     update={
                         "error_messages": state.error_messages
-                        + ["No execution result to validate"],
+                        + ["No widget configuration to validate"],
                         "data_validated": False,
                         "updated_at": datetime.now(),
                     },
                 )
 
-            # Check for execution errors first
+            # For backwards compatibility, still check for execution errors if code_execution_result exists
+            # This handles cases where data node produced errors
             if (
-                isinstance(state.code_execution_result, dict)
+                state.code_execution_result is not None
+                and isinstance(state.code_execution_result, dict)
                 and "error" in state.code_execution_result
             ):
                 return Command(
@@ -113,10 +115,10 @@ class ValidationAgent:
                 )
 
             # Get first 10 rows/items of generated data for validation
-            sample_data = self._get_data_sample(state.code_execution_result)
+            sample_data = self._get_data_sample(state.widget_config)
 
             # Get data schema information
-            data_schema = self._analyze_data_structure(state.code_execution_result)
+            data_schema = self._analyze_data_structure(state.widget_config)
 
             # Fetch and compile validation prompt from Langfuse with dynamic variables
             try:
@@ -204,7 +206,7 @@ class ValidationAgent:
                     goto="widget_supervisor",
                     update={
                         "data_validated": True,
-                        "data": state.code_execution_result,
+                        "data": state.widget_config,  # Use unified widget_config
                         "updated_at": datetime.now(),
                         "messages": [
                             ToolMessage(
