@@ -15,9 +15,11 @@ from supabase import Client, create_client
 # Import langfuse conditionally to avoid breaking the system when not available
 try:
     from langfuse import Langfuse
+    from langfuse.langchain import CallbackHandler
     LANGFUSE_AVAILABLE = True
 except ImportError:
     Langfuse = None
+    CallbackHandler = None
     LANGFUSE_AVAILABLE = False
 
 # Load environment variables from .env file
@@ -246,6 +248,103 @@ def get_prompt(prompt_name: str, version: Optional[int] = None, label: Optional[
         raise
 
 
+def get_langfuse_callback_handler(
+    trace_name: Optional[str] = None,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    tags: Optional[list] = None,
+    metadata: Optional[dict] = None
+) -> Optional["CallbackHandler"]:
+    """Get a Langfuse callback handler for LangChain tracing.
+    
+    Args:
+        trace_name: Optional name for the trace (passed via langchain config metadata)
+        session_id: Optional session ID for grouping traces (passed via langchain config metadata)
+        user_id: Optional user ID for tracking (passed via langchain config metadata)
+        tags: Optional list of tags for the trace (passed via langchain config metadata)  
+        metadata: Optional metadata dictionary (passed via langchain config metadata)
+    
+    Returns:
+        CallbackHandler: Initialized Langfuse callback handler or None if unavailable
+        
+    Note:
+        Trace attributes should be set via the LangChain config metadata when invoking,
+        not through the handler constructor. The handler itself is created without parameters.
+    """
+    try:
+        if not LANGFUSE_AVAILABLE:
+            logger.warning("Langfuse is not available - skipping tracing")
+            return None
+            
+        langfuse_client = get_langfuse_client()
+        if not langfuse_client:
+            logger.warning("Langfuse client not available - skipping tracing")
+            return None
+            
+        # Create basic callback handler - trace attributes will be set via config metadata
+        handler = CallbackHandler()
+            
+        logger.info("Langfuse callback handler created successfully")
+        return handler
+        
+    except Exception as e:
+        logger.error(f"Failed to create Langfuse callback handler: {str(e)}")
+        # Return None instead of raising to avoid breaking the system
+        return None
+
+
+def get_langchain_config_with_tracing(
+    trace_name: Optional[str] = None,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    tags: Optional[list] = None,
+    metadata: Optional[dict] = None
+) -> dict:
+    """Get a LangChain config dict with Langfuse tracing enabled.
+    
+    Args:
+        trace_name: Optional name for the trace
+        session_id: Optional session ID for grouping traces
+        user_id: Optional user ID for tracking
+        tags: Optional list of tags for the trace
+        metadata: Optional metadata dictionary
+    
+    Returns:
+        Dict: LangChain config with callbacks and metadata for Langfuse tracing
+    """
+    try:
+        if not LANGFUSE_AVAILABLE:
+            return {}
+            
+        handler = get_langfuse_callback_handler()
+        if not handler:
+            return {}
+            
+        # Build metadata for trace attributes
+        trace_metadata = metadata.copy() if metadata else {}
+        if session_id:
+            trace_metadata['langfuse_session_id'] = session_id
+        if user_id:
+            trace_metadata['langfuse_user_id'] = user_id
+        if tags:
+            trace_metadata['langfuse_tags'] = tags
+            
+        config = {
+            "callbacks": [handler],
+            "metadata": trace_metadata
+        }
+        
+        # Add run_name for trace naming
+        if trace_name:
+            config["run_name"] = trace_name
+            
+        return config
+        
+    except Exception as e:
+        logger.error(f"Failed to create Langchain config with tracing: {str(e)}")
+        return {}
+
+
 # Initialize client on module import
 try:
     get_supabase_client()
@@ -281,5 +380,7 @@ __all__ = [
     "get_langfuse_client",
     "reset_langfuse_client",
     "get_prompt",
+    "get_langfuse_callback_handler",
+    "get_langchain_config_with_tracing",
     "LANGFUSE_AVAILABLE",
 ]

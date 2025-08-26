@@ -9,6 +9,7 @@ from langgraph.graph import END
 from langgraph.types import Command
 
 from agent.models import SupervisorDecision, WidgetAgentState
+from config import get_langfuse_callback_handler, LANGFUSE_AVAILABLE
 
 # Handle imports for different execution contexts
 try:
@@ -306,8 +307,32 @@ class WidgetSupervisor:
                 # Create detailed prompt for LLM supervisor
                 routing_prompt = self.create_routing_prompt(state_analysis)
 
+                # Create Langfuse callback handler for widget supervisor tracing
+                supervisor_config = {}
+                if LANGFUSE_AVAILABLE:
+                    try:
+                        langfuse_handler = get_langfuse_callback_handler(
+                            trace_name="widget-supervisor-routing",
+                            session_id=state.get('chat_id'),
+                            user_id=state.get('user_id'),  
+                            tags=["widget-supervisor", "routing", "decision"],
+                            metadata={
+                                "dashboard_id": state.get('dashboard_id'),
+                                "widget_type": state.get('widget_type'),
+                                "operation": state.get('operation'),
+                                "task_id": state.get('task_id')
+                            }
+                        )
+                        if langfuse_handler:
+                            supervisor_config = {"callbacks": [langfuse_handler]}
+                    except Exception as langfuse_error:
+                        print(f"Failed to create Langfuse handler for widget supervisor: {langfuse_error}")
+
                 # Get structured decision from LLM
-                decision = self.llm_with_structure.invoke(routing_prompt)
+                if supervisor_config:
+                    decision = self.llm_with_structure.invoke(routing_prompt, config=supervisor_config)
+                else:
+                    decision = self.llm_with_structure.invoke(routing_prompt)
 
                 # Apply minimal safety constraints only
                 decision = self.apply_business_rules(decision, state)

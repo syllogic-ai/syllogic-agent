@@ -22,6 +22,7 @@ from .tools.data_reader import get_available_data
 from .tools.task_manager import update_task_status, get_pending_tasks
 from .structured_output import SupervisorResponse, TaskCreationPlan, SupervisorDecision, TaskCreationRequest
 from actions.prompts import compile_prompt, get_prompt_config
+from config import get_langfuse_callback_handler, LANGFUSE_AVAILABLE
 
 # Handle imports for different execution contexts
 try:
@@ -181,8 +182,31 @@ def plan_widget_tasks(
         planning_llm = ChatOpenAI(**planning_llm_params)
         planning_llm_structured = planning_llm.with_structured_output(TaskCreationPlan)
 
+        # Create Langfuse callback handler for planning LLM tracing
+        planning_config = {}
+        if LANGFUSE_AVAILABLE:
+            try:
+                langfuse_handler = get_langfuse_callback_handler(
+                    trace_name="widget-task-planning",
+                    session_id=state.chat_id,
+                    user_id=state.user_id,
+                    tags=["planning", "widget-tasks", "llm"],
+                    metadata={
+                        "dashboard_id": state.dashboard_id,
+                        "request_id": state.request_id,
+                        "tool": "plan_widget_tasks"
+                    }
+                )
+                if langfuse_handler:
+                    planning_config = {"callbacks": [langfuse_handler]}
+            except Exception as langfuse_error:
+                logger.warning(f"Failed to create Langfuse handler for planning LLM: {langfuse_error}")
+
         # Get structured AI planning response
-        task_plan = planning_llm_structured.invoke(planning_prompt)
+        if planning_config:
+            task_plan = planning_llm_structured.invoke(planning_prompt, config=planning_config)
+        else:
+            task_plan = planning_llm_structured.invoke(planning_prompt)
         
         # Create DelegatedTask objects from the AI plan
         created_task_names = []
@@ -840,7 +864,33 @@ Start by analyzing the available data, then determine what needs to be done.
         
         # Invoke the agent with the complete state and handle potential failures
         try:
-            result = supervisor_agent.invoke(agent_input)
+            # Create Langfuse callback handler for tracing
+            langfuse_config = {}
+            if LANGFUSE_AVAILABLE:
+                try:
+                    langfuse_handler = get_langfuse_callback_handler(
+                        trace_name="top-level-supervisor-execution",
+                        session_id=supervisor_state.chat_id,
+                        user_id=supervisor_state.user_id,
+                        tags=["supervisor", "orchestrator", "top-level"],
+                        metadata={
+                            "dashboard_id": supervisor_state.dashboard_id,
+                            "request_id": supervisor_state.request_id,
+                            "user_prompt": supervisor_state.user_prompt[:200] + "..." if len(supervisor_state.user_prompt) > 200 else supervisor_state.user_prompt
+                        }
+                    )
+                    if langfuse_handler:
+                        langfuse_config = {"callbacks": [langfuse_handler]}
+                        logger.info("Top Level Supervisor configured with Langfuse tracing")
+                except Exception as langfuse_error:
+                    logger.warning(f"Failed to create Langfuse handler for supervisor: {langfuse_error}")
+            
+            # Invoke the agent with or without tracing
+            if langfuse_config:
+                result = supervisor_agent.invoke(agent_input, config=langfuse_config)
+            else:
+                result = supervisor_agent.invoke(agent_input)
+                
         except Exception as tool_error:
             # Handle tool execution errors
             return handle_tool_failure(supervisor_state, str(tool_error))

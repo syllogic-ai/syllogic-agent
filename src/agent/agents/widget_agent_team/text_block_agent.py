@@ -12,6 +12,7 @@ from langgraph.prebuilt import create_react_agent
 from langgraph.types import Command
 
 from agent.models import WidgetAgentState, TextBlockContentSchema
+from config import get_langfuse_callback_handler, LANGFUSE_AVAILABLE
 from .tools.fetch_widget import fetch_widget_tool
 
 # Handle imports for different execution contexts
@@ -223,7 +224,32 @@ When calling generate_text_content tool, provide a content_request dictionary wi
                 
                 # Generate content with structured output
                 structured_llm = content_llm.with_structured_output(TextBlockContentSchema)
-                response = structured_llm.invoke(text_prompt_str)
+                
+                # Create Langfuse callback handler for text block content generation
+                content_config = {}
+                if LANGFUSE_AVAILABLE:
+                    try:
+                        langfuse_handler = get_langfuse_callback_handler(
+                            trace_name="text-block-content-generation",
+                            session_id=state.chat_id,
+                            user_id=getattr(state, 'user_id', None),
+                            tags=["text-block", "content-generation", "structured"],
+                            metadata={
+                                "dashboard_id": state.dashboard_id,
+                                "widget_id": state.widget_id,
+                                "operation": state.operation
+                            }
+                        )
+                        if langfuse_handler:
+                            content_config = {"callbacks": [langfuse_handler]}
+                    except Exception as langfuse_error:
+                        logger.warning(f"Failed to create Langfuse handler for text content generation: {langfuse_error}")
+                
+                # Invoke structured LLM with or without tracing
+                if content_config:
+                    response = structured_llm.invoke(text_prompt_str, config=content_config)
+                else:
+                    response = structured_llm.invoke(text_prompt_str)
                 
                 # Extract content from response
                 if hasattr(response, 'content'):
@@ -307,8 +333,32 @@ Requirements:
             
             logger.info(f"Starting text block generation for widget_id: {state.widget_id}")
             
-            # Execute the agent
-            result = self.agent_executor.invoke(agent_input)
+            # Create Langfuse callback handler for text block agent execution
+            agent_config = {}
+            if LANGFUSE_AVAILABLE:
+                try:
+                    langfuse_handler = get_langfuse_callback_handler(
+                        trace_name="text-block-agent-execution",
+                        session_id=state.chat_id,
+                        user_id=getattr(state, 'user_id', None),
+                        tags=["text-block-agent", "react-agent", "execution"],
+                        metadata={
+                            "dashboard_id": state.dashboard_id,
+                            "widget_id": state.widget_id,
+                            "operation": state.operation,
+                            "task_id": state.task_id
+                        }
+                    )
+                    if langfuse_handler:
+                        agent_config = {"callbacks": [langfuse_handler]}
+                except Exception as langfuse_error:
+                    logger.warning(f"Failed to create Langfuse handler for text block agent: {langfuse_error}")
+            
+            # Execute the agent with or without tracing
+            if agent_config:
+                result = self.agent_executor.invoke(agent_input, config=agent_config)
+            else:
+                result = self.agent_executor.invoke(agent_input)
             
             # Extract the generated content
             generated_content = ""

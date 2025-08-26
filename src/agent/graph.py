@@ -24,6 +24,7 @@ from langgraph.graph.message import add_messages
 from langgraph.types import Command
 from supabase import Client
 
+from config import get_langchain_config_with_tracing, LANGFUSE_AVAILABLE
 from agent.agents.widget_agent_team.widget_supervisor import widget_supervisor
 from agent.agents.widget_agent_team.worker_nodes import (
     data_node,
@@ -37,6 +38,51 @@ from agent.models import WidgetAgentState, TopLevelSupervisorState, DelegatedTas
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../actions"))
 
 from utils import merge_lists, take_last
+
+
+def create_langfuse_config(state: dict, trace_name: str = "syllogic-agent-execution") -> dict:
+    """Create Langfuse configuration for tracing based on state context.
+    
+    Args:
+        state: The current graph state containing user/session info
+        trace_name: Name for the trace
+        
+    Returns:
+        Dict containing callbacks configuration or empty dict if Langfuse unavailable
+    """
+    if not LANGFUSE_AVAILABLE:
+        return {}
+        
+    try:
+        # Extract context information from state
+        user_id = state.get("user_id")
+        chat_id = state.get("chat_id") 
+        dashboard_id = state.get("dashboard_id")
+        request_id = state.get("request_id")
+        
+        # Create trace metadata
+        metadata = {
+            "dashboard_id": dashboard_id,
+            "request_id": request_id,
+        }
+        
+        # Use the new helper function
+        config = get_langchain_config_with_tracing(
+            trace_name=trace_name,
+            session_id=chat_id,  # Use chat_id as session for conversation grouping
+            user_id=user_id,
+            tags=["syllogic", "agent", "langgraph", "multi-agent"],
+            metadata=metadata
+        )
+        
+        if config:
+            logger.info(f"Created Langfuse tracing for user={user_id}, chat={chat_id}, dashboard={dashboard_id}")
+            
+        return config
+            
+    except Exception as e:
+        logger.error(f"Error creating Langfuse config: {e}")
+        return {}
 
 
 class Context(TypedDict):
@@ -334,9 +380,16 @@ def widget_team_adapter(state: dict):
         
         logger.info(f"Invoking widget subgraph for {widget_state['operation']} {widget_state['widget_type']} widget")
         
-        # Build and invoke the widget subgraph
+        # Build and invoke the widget subgraph with Langfuse tracing
         widget_graph = build_widget_agent_graph()
-        result = widget_graph.invoke(widget_state)
+        langfuse_config = create_langfuse_config(state, "widget-subgraph-execution")
+        
+        if langfuse_config:
+            # Invoke with Langfuse tracing
+            result = widget_graph.invoke(widget_state, config=langfuse_config)
+        else:
+            # Invoke without tracing
+            result = widget_graph.invoke(widget_state)
         
         # Update the delegated task status in parent state
         updated_tasks = []

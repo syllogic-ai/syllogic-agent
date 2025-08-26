@@ -12,6 +12,7 @@ from langgraph.prebuilt import InjectedState
 from langgraph.types import Command
 
 from agent.models import WidgetAgentState
+from config import get_langfuse_callback_handler, LANGFUSE_AVAILABLE
 
 from actions.utils import get_chart_config_schema_string
 
@@ -170,7 +171,33 @@ Please fix these issues in your generated code.
 """
 
         final_prompt = code_generation_prompt + error_context
-        generated_code = code_gen_llm.invoke(final_prompt).content
+        
+        # Create Langfuse callback handler for code generation tracing
+        codegen_config = {}
+        if LANGFUSE_AVAILABLE:
+            try:
+                langfuse_handler = get_langfuse_callback_handler(
+                    trace_name="python-code-generation",
+                    session_id=state.chat_id,
+                    user_id=getattr(state, 'user_id', None),
+                    tags=["code-generation", "python", "widget"],
+                    metadata={
+                        "dashboard_id": state.dashboard_id,
+                        "widget_type": state.widget_type,
+                        "operation": state.operation,
+                        "tool": "generate_python_code_tool"
+                    }
+                )
+                if langfuse_handler:
+                    codegen_config = {"callbacks": [langfuse_handler]}
+            except Exception as langfuse_error:
+                print(f"Failed to create Langfuse handler for code generation: {langfuse_error}")
+        
+        # Invoke LLM with or without tracing
+        if codegen_config:
+            generated_code = code_gen_llm.invoke(final_prompt, config=codegen_config).content
+        else:
+            generated_code = code_gen_llm.invoke(final_prompt).content
 
         # Clean up the code (remove markdown formatting if present)
         if "```python" in generated_code:

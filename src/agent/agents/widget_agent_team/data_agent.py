@@ -9,6 +9,7 @@ from langgraph.prebuilt import create_react_agent
 from langgraph.types import Command
 
 from agent.models import FileSampleData, FileSchema, WidgetAgentState
+from config import get_langfuse_callback_handler, LANGFUSE_AVAILABLE
 from .tools.fetch_data import fetch_data_tool
 from .tools.code_generation import generate_python_code_tool
 from .tools.code_execution import e2b_sandbox_tool
@@ -233,8 +234,32 @@ Please:
                 "updated_at": state.updated_at,
             }
 
+            # Create Langfuse callback handler for data agent execution  
+            data_agent_config = {}
+            if LANGFUSE_AVAILABLE:
+                try:
+                    langfuse_handler = get_langfuse_callback_handler(
+                        trace_name="data-agent-execution",
+                        session_id=state.chat_id,
+                        user_id=getattr(state, 'user_id', None),
+                        tags=["data-agent", "react-agent", "data-processing"],
+                        metadata={
+                            "dashboard_id": state.dashboard_id,
+                            "widget_type": state.widget_type,
+                            "operation": state.operation,
+                            "file_ids": state.file_ids
+                        }
+                    )
+                    if langfuse_handler:
+                        data_agent_config = {"callbacks": [langfuse_handler]}
+                except Exception as langfuse_error:
+                    print(f"Failed to create Langfuse handler for data agent: {langfuse_error}")
+            
             # Invoke the create_react_agent - it will handle tool calling with state injection
-            agent_result = self.agent.invoke(agent_input)
+            if data_agent_config:
+                agent_result = self.agent.invoke(agent_input, config=data_agent_config)
+            else:
+                agent_result = self.agent.invoke(agent_input)
 
             # The agent result contains the updated state from Command objects
             # Extract what we need for the parent graph
