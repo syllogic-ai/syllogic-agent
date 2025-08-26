@@ -58,7 +58,7 @@ class TaskCreationRequest(BaseModel):
     """Structured request for creating a specific widget task."""
     
     widget_type: str = Field(
-        description="Type of widget to create (line, bar, pie, area, radial, kpi, table)"
+        description="Type of widget to create (line, bar, pie, area, radial, kpi, table, text)"
     )
     operation: str = Field(
         description="Operation to perform (CREATE, UPDATE, DELETE)"
@@ -74,6 +74,9 @@ class TaskCreationRequest(BaseModel):
     )
     widget_id: Optional[str] = Field(
         default=None, description="Widget ID for UPDATE/DELETE operations"
+    )
+    reference_widget_id: Optional[str] = Field(
+        default=None, description="Widget ID to reference for text blocks (e.g., chart widget being explained)"
     )
     task_instructions: str = Field(
         description="Detailed instructions for the widget_agent_team"

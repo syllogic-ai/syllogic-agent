@@ -39,6 +39,7 @@ class WidgetSupervisor:
             # Extract required model and temperature from Langfuse config
             model = prompt_config.get("model")
             temperature = prompt_config.get("temperature")
+            reasoning_effort = prompt_config.get("reasoning_effort")
             
             # Validate required configuration
             if not model:
@@ -46,10 +47,19 @@ class WidgetSupervisor:
             if temperature is None:
                 raise ValueError("Temperature configuration is missing in Langfuse prompt config")
             
-            logger.info(f"✅ Using Langfuse model config - model: {model}, temperature: {temperature}")
+            logger.info(f"✅ Using Langfuse model config - model: {model}, temperature: {temperature}, reasoning_effort: {reasoning_effort}")
             
             # Initialize LLM with Langfuse configuration
-            self.llm = ChatOpenAI(model=model, temperature=temperature)
+            llm_params = {
+                "model": model,
+                "temperature": temperature
+            }
+            
+            # Add reasoning_effort if provided (for reasoning models like o1, o3, o4-mini)
+            if reasoning_effort:
+                llm_params["reasoning_effort"] = reasoning_effort
+                
+            self.llm = ChatOpenAI(**llm_params)
             self.llm_with_structure = self.llm.with_structured_output(SupervisorDecision)
             
         except Exception as e:
@@ -123,6 +133,8 @@ class WidgetSupervisor:
                 "file_count": len(state.file_ids),
                 "widget_configured": bool(state.title and state.description),
                 "dashboard_id": state.dashboard_id,
+                "reference_widget_id": state.reference_widget_id,
+                "has_reference_widget": state.reference_widget_id is not None,
             },
         }
         

@@ -45,7 +45,7 @@ def fetch_widget_details(widget_id: str) -> Dict[str, Any]:
         # Fetch widget details from database
         widget_result = (
             supabase.table("widgets")
-            .select("id, title, description, widget_type, config, data, sql, dashboard_id")
+            .select("id, title, type, config, data, sql, dashboard_id")
             .eq("id", widget_id)
             .single()
             .execute()
@@ -61,8 +61,8 @@ def fetch_widget_details(widget_id: str) -> Dict[str, Any]:
         return {
             "widget_id": widget_data["id"],
             "title": widget_data.get("title", ""),
-            "description": widget_data.get("description", ""),
-            "widget_type": widget_data.get("widget_type", ""),
+            "description": "",  # Description not in database schema - use empty string
+            "widget_type": widget_data.get("type", ""),  # Field is 'type' not 'widget_type'
             "config": widget_data.get("config", {}),
             "data": widget_data.get("data", {}),
             "sql": widget_data.get("sql", ""),
@@ -86,13 +86,16 @@ def fetch_widget_tool(state: WidgetAgentState, tool_call_id: str) -> str:
         String result for LLM consumption
     """
     try:
-        if not state.widget_id:
-            return "ERROR: No widget_id provided in state"
+        # Use reference_widget_id for text blocks analyzing existing widgets
+        target_widget_id = state.reference_widget_id if state.reference_widget_id else state.widget_id
+        
+        if not target_widget_id:
+            return "ERROR: No reference_widget_id or widget_id provided in state"
             
-        widget_details = fetch_widget_details(state.widget_id)
+        widget_details = fetch_widget_details(target_widget_id)
         
         # Format for LLM consumption
-        result = f"""Widget Details Retrieved:
+        result = f"""Referenced Widget Details Retrieved:
 - Widget ID: {widget_details['widget_id']}
 - Title: {widget_details['title']}
 - Description: {widget_details['description']}
@@ -102,7 +105,7 @@ def fetch_widget_tool(state: WidgetAgentState, tool_call_id: str) -> str:
 - Current Data: {widget_details['data']}
 """
         
-        logger.info(f"fetch_widget_tool completed for widget_id: {state.widget_id}")
+        logger.info(f"fetch_widget_tool completed for reference_widget_id: {target_widget_id}")
         return result
         
     except Exception as e:

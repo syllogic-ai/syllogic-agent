@@ -11,7 +11,7 @@ from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
 from langgraph.types import Command
 
-from agent.models import WidgetAgentState
+from agent.models import WidgetAgentState, TextBlockContentSchema
 from .tools.fetch_widget import fetch_widget_tool
 
 # Handle imports for different execution contexts
@@ -51,6 +51,7 @@ class TextBlockAgent:
             # Extract required model and temperature from Langfuse config
             model = prompt_config.get("model")
             temperature = prompt_config.get("temperature")
+            reasoning_effort = prompt_config.get("reasoning_effort")
             
             # Validate required configuration
             if not model:
@@ -58,19 +59,42 @@ class TextBlockAgent:
             if temperature is None:
                 raise ValueError("Temperature configuration is missing in Langfuse prompt config")
             
-            logger.info(f"✅ Using Langfuse model config - model: {model}, temperature: {temperature}")
+            logger.info(f"✅ Using Langfuse model config - model: {model}, temperature: {temperature}, reasoning_effort: {reasoning_effort}")
             
             # Initialize LLM with Langfuse configuration
-            llm = ChatOpenAI(model=model, temperature=temperature)
+            llm_params = {
+                "model": model,
+                "temperature": temperature
+            }
+            
+            # Add reasoning_effort if provided (for reasoning models like o1, o3, o4-mini)
+            if reasoning_effort:
+                llm_params["reasoning_effort"] = reasoning_effort
+                
+            llm = ChatOpenAI(**llm_params)
             
             # Create tools for the agent
             tools = [self._create_fetch_widget_tool(), self._create_generate_content_tool()]
             
-            # Create react agent
+            # Use fallback prompt - agent prompt should be simple for ReactAgent
+            agent_prompt = """You are a text block content generator. Use the available tools to fetch widget details and generate appropriate HTML content.
+                
+Your responsibilities:
+1. Use the fetch_widget_details tool to get details about widgets when needed
+2. Use the generate_text_content tool to create appropriate HTML content for text blocks
+3. Consider the context and purpose of the text block when generating content
+4. Ensure the content is well-formatted and informative
+
+When calling generate_text_content tool, provide a content_request dictionary with these keys:
+- widget_details: The JSON string result from fetch_widget_details
+- user_prompt: The user's original request
+- task_instructions: The specific task instructions"""
+
+            # Create react agent with proper parameters
             self.agent_executor = create_react_agent(
-                llm, 
-                tools,
-                state_modifier="You are a text block content generator. Use the available tools to fetch widget details and generate appropriate HTML content."
+                model=llm,
+                tools=tools,
+                prompt=agent_prompt
             )
             
             logger.info("✅ Text block agent initialized successfully with Langfuse configuration")
@@ -93,9 +117,28 @@ class TextBlockAgent:
                 Widget details as formatted string
             """
             try:
-                from .tools.fetch_widget import fetch_widget_details
-                details = fetch_widget_details(widget_id)
-                return json.dumps(details, indent=2)
+                from actions.widgets import get_widget_by_id, get_widget_summary_by_id
+                
+                # Get full widget details
+                widget = get_widget_by_id(widget_id)
+                if not widget:
+                    return f"ERROR: Widget {widget_id} not found"
+                
+                # Get a readable summary
+                summary = get_widget_summary_by_id(widget_id)
+                
+                # Return both structured data and summary
+                result = {
+                    "widget_summary": summary,
+                    "widget_details": widget,
+                    "widget_id": widget_id,
+                    "title": widget.get('title', 'Untitled'),
+                    "type": widget.get('type', 'unknown'),
+                    "config": widget.get('config', {}),
+                    "description": f"Widget '{widget.get('title', 'Untitled')}' of type {widget.get('type', 'unknown')}"
+                }
+                
+                return json.dumps(result, indent=2, default=str)
             except Exception as e:
                 return f"ERROR: Failed to fetch widget details: {str(e)}"
         
@@ -104,18 +147,24 @@ class TextBlockAgent:
     def _create_generate_content_tool(self):
         """Create tool for generating text block content."""
         @tool
-        def generate_text_content(widget_details: str, user_prompt: str, task_instructions: str) -> str:
+        def generate_text_content(content_request: dict) -> str:
             """Generate HTML content for text block widget using Langfuse prompt.
             
             Args:
-                widget_details: Widget details as JSON string
-                user_prompt: User's original request
-                task_instructions: Specific task instructions
-                
+                content_request: Dictionary containing:
+                    - widget_details: Widget details as JSON string
+                    - user_prompt: User's original request  
+                    - task_instructions: Specific task instructions
+                    
             Returns:
                 Generated HTML content
             """
             try:
+                # Extract parameters from content_request dictionary
+                widget_details = content_request.get('widget_details', '{}')
+                user_prompt = content_request.get('user_prompt', '')
+                task_instructions = content_request.get('task_instructions', '')
+                
                 # Parse widget details
                 try:
                     widget_data = json.loads(widget_details)
@@ -158,12 +207,23 @@ class TextBlockAgent:
                 prompt_config = get_prompt_config("widget_agent_team/text_block_agent", label="latest")
                 model = prompt_config.get("model")
                 temperature = prompt_config.get("temperature", 0.7)
+                reasoning_effort = prompt_config.get("reasoning_effort")
                 
                 # Create LLM instance for content generation
-                content_llm = ChatOpenAI(model=model, temperature=temperature)
+                content_llm_params = {
+                    "model": model,
+                    "temperature": temperature
+                }
                 
-                # Generate content
-                response = content_llm.invoke(text_prompt_str)
+                # Add reasoning_effort if provided (for reasoning models like o1, o3, o4-mini)
+                if reasoning_effort:
+                    content_llm_params["reasoning_effort"] = reasoning_effort
+                    
+                content_llm = ChatOpenAI(**content_llm_params)
+                
+                # Generate content with structured output
+                structured_llm = content_llm.with_structured_output(TextBlockContentSchema)
+                response = structured_llm.invoke(text_prompt_str)
                 
                 # Extract content from response
                 if hasattr(response, 'content'):
@@ -195,6 +255,31 @@ class TextBlockAgent:
             if not self.agent_executor:
                 raise RuntimeError("Agent not properly initialized")
             
+            # Check if we have a reference widget ID to fetch details from
+            reference_context = ""
+            if state.reference_widget_id:
+                try:
+                    from actions.widgets import get_widget_summary_by_id
+                    summary = get_widget_summary_by_id(state.reference_widget_id)
+                    if summary:
+                        reference_context = f"""
+
+CRITICAL: This text block must analyze the existing chart widget with ID: {state.reference_widget_id}
+Summary: {summary}
+
+MANDATORY FIRST STEP: Call fetch_widget_details("{state.reference_widget_id}") to get the chart data and configuration.
+DO NOT use the current widget ID {state.widget_id} - that's the text block being created.
+USE the reference widget ID {state.reference_widget_id} - that's the chart to analyze."""
+                except Exception as e:
+                    logger.warning(f"Failed to get reference widget summary: {e}")
+                    reference_context = f"""
+
+CRITICAL: This text block must analyze the existing widget with ID: {state.reference_widget_id}
+
+MANDATORY FIRST STEP: Call fetch_widget_details("{state.reference_widget_id}") to get the widget data.
+DO NOT use the current widget ID {state.widget_id} - that's the text block being created.
+USE the reference widget ID {state.reference_widget_id} - that's the widget to analyze."""
+            
             # Prepare input for the agent
             agent_input = {
                 "messages": [
@@ -205,10 +290,10 @@ class TextBlockAgent:
 User Request: {state.user_prompt}
 Task Instructions: {state.task_instructions}
 Widget ID: {state.widget_id}
+{reference_context}
 
 Use the available tools to:
-1. Fetch the current widget details and configuration
-2. Generate appropriate HTML content for the text block
+{("1. Generate appropriate HTML content for the text block" if not state.reference_widget_id else f"1. FIRST: Call fetch_widget_details('{state.reference_widget_id}') to get the referenced widget data\n2. Generate HTML content explaining the referenced widget based on the fetched data")}
 
 Requirements:
 - Use h2 tags for headings (not h1)
@@ -239,55 +324,34 @@ Requirements:
             else:
                 generated_content = str(result)
             
-            # Create the widget configuration
+            # Create the widget configuration for later database update
             widget_config = {
                 "content": generated_content
             }
             
-            # Update the widget in the database
-            logger.info(f"Updating widget {state.widget_id} with generated text block content")
+            logger.info(f"✅ Successfully generated text block content for widget {state.widget_id}")
             
-            update_result = update_widget(
-                widget_id=state.widget_id,
-                config=widget_config,
-                is_configured=True
+            # Return to widget_supervisor with generated content - do NOT update database here
+            return Command(
+                goto="widget_supervisor",
+                update={
+                    "generated_code": generated_content,
+                    "widget_config": widget_config,
+                    "task_status": "in_progress",  # Still in progress, not completed
+                    "updated_at": datetime.now(),
+                }
             )
-            
-            if update_result:
-                logger.info(f"✅ Successfully updated text block widget {state.widget_id}")
-                
-                return Command(
-                    goto="end",
-                    update={
-                        "generated_code": generated_content,
-                        "widget_config": widget_config,
-                        "widget_update_completed": True,
-                        "task_status": "completed",
-                        "updated_at": datetime.now(),
-                    }
-                )
-            else:
-                error_msg = "Failed to update widget in database"
-                logger.error(error_msg)
-                
-                return Command(
-                    goto="end",
-                    update={
-                        "error_messages": state.error_messages + [error_msg],
-                        "task_status": "failed",
-                        "updated_at": datetime.now(),
-                    }
-                )
                 
         except Exception as e:
             error_msg = f"Text block generation failed: {str(e)}"
             logger.error(error_msg)
             
+            # Return to widget_supervisor even on error - let supervisor decide next step
             return Command(
-                goto="end", 
+                goto="widget_supervisor", 
                 update={
                     "error_messages": state.error_messages + [error_msg],
-                    "task_status": "failed",
+                    "task_status": "in_progress",  # Let supervisor decide if this is terminal
                     "updated_at": datetime.now(),
                 }
             )

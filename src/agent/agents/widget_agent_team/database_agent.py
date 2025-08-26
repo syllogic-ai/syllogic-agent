@@ -71,6 +71,7 @@ class DatabaseAgent:
                     title=title,
                     widget_type=widget_type,
                     config=state.code_execution_result or {},  # Pass full code_execution_result as config or empty dict
+                    widget_id=widget_id,  # Pass the widget_id to be used
                     chat_id=state.chat_id,
                     description=state.description,
                     data={"data": state.code_execution_result.get("data", []) if state.code_execution_result else []},  # Wrap data array in dictionary

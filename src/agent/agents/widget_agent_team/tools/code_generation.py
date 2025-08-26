@@ -119,6 +119,7 @@ def generate_python_code_tool(
             # Extract required model and temperature from Langfuse config
             model = prompt_config.get("model")
             temperature = prompt_config.get("temperature")
+            reasoning_effort = prompt_config.get("reasoning_effort")
             
             # Validate required configuration
             if not model:
@@ -126,10 +127,19 @@ def generate_python_code_tool(
             if temperature is None:
                 raise ValueError("Temperature configuration is missing in Langfuse prompt config")
             
-            logger.info(f"✅ Using Langfuse model config - model: {model}, temperature: {temperature}")
+            logger.info(f"✅ Using Langfuse model config - model: {model}, temperature: {temperature}, reasoning_effort: {reasoning_effort}")
             
             # Create code generation LLM with Langfuse configuration
-            code_gen_llm = ChatOpenAI(model=model, temperature=temperature)
+            code_gen_llm_params = {
+                "model": model,
+                "temperature": temperature
+            }
+            
+            # Add reasoning_effort if provided (for reasoning models like o1, o3, o4-mini)
+            if reasoning_effort:
+                code_gen_llm_params["reasoning_effort"] = reasoning_effort
+                
+            code_gen_llm = ChatOpenAI(**code_gen_llm_params)
             
             # Use the compiled prompt
             code_generation_prompt = code_generation_prompt_str

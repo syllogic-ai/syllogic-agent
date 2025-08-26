@@ -17,7 +17,9 @@ class CreateWidgetInput(BaseModel):
     widget_type: str = Field(
         description="Widget type ('text', 'chart', 'kpi', 'table')"
     )
+    description: Optional[str] = Field(default=None, description="Widget description")
     config: Dict[str, Any] = Field(description="Widget configuration")
+    widget_id: Optional[str] = Field(default=None, description="Specific widget ID to use (if not provided, generates new UUID)")
     data: Optional[Dict[str, Any]] = Field(default=None, description="Widget data")
     sql: Optional[str] = Field(default=None, description="SQL query")
     layout: Optional[Dict[str, Any]] = Field(
@@ -105,6 +107,7 @@ class SupervisorDecision(BaseModel):
         "data",
         "validate_data", 
         "db_operations_node",
+        "text_block_node",
         "end",
     ]
     reasoning: str
@@ -125,8 +128,11 @@ class WidgetAgentState(BaseModel):
 
     # Widget configuration
     operation: Literal["CREATE", "UPDATE", "DELETE"]
-    widget_type: Literal["line", "bar", "pie", "area", "radial", "kpi", "table"]
+    widget_type: Literal["line", "bar", "pie", "area", "radial", "kpi", "table", "text"]
     widget_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    reference_widget_id: Optional[str] = Field(
+        default=None, description="Widget ID to reference for text blocks (e.g., chart widget being explained)"
+    )
     dashboard_id: str = Field(description="Dashboard identifier for the widget")
     chat_id: Optional[str] = Field(default=None, description="Chat ID if created from chat")
 
@@ -183,6 +189,12 @@ class XAxisConfig(BaseModel):
     """Configuration for the chart's X-axis."""
 
     dataKey: str = Field(description="The data key to use for the X-axis")
+
+
+class TextBlockContentSchema(BaseModel):
+    """Content for a text block."""
+
+    content: str = Field(description="HTML content of the text block")
 
 
 class ChartConfigSchema(BaseModel):
@@ -404,7 +416,7 @@ class DelegatedTask(BaseModel):
     )
     
     # Widget-specific task data
-    widget_type: Literal["line", "bar", "pie", "area", "radial", "kpi", "table"] = Field(
+    widget_type: Literal["line", "bar", "pie", "area", "radial", "kpi", "table", "text"] = Field(
         description="Type of widget to create/update/delete"
     )
     operation: Literal["CREATE", "UPDATE", "DELETE"] = Field(
@@ -415,6 +427,9 @@ class DelegatedTask(BaseModel):
     )
     widget_id: Optional[str] = Field(
         default=None, description="Widget ID for UPDATE/DELETE operations or context reference"
+    )
+    reference_widget_id: Optional[str] = Field(
+        default=None, description="Widget ID to reference for text blocks (e.g., chart widget being explained)"
     )
     
     # Additional widget task fields (these contain all needed data for widget_agent_team)
@@ -468,6 +483,9 @@ class TopLevelSupervisorState(BaseModel):
     # Task management
     delegated_tasks: List[DelegatedTask] = Field(
         default_factory=list, description="Tasks delegated to specialized agents"
+    )
+    completed_widget_ids: Dict[str, str] = Field(
+        default_factory=dict, description="Mapping of task_id to actual widget_id for completed tasks"
     )
     current_reasoning: Optional[str] = Field(
         default=None, description="Current reasoning and analysis"

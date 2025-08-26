@@ -58,6 +58,7 @@ class ValidationAgent:
             # Extract required model and temperature from Langfuse config
             model = prompt_config.get("model")
             temperature = prompt_config.get("temperature")
+            reasoning_effort = prompt_config.get("reasoning_effort")
             
             # Validate required configuration
             if not model:
@@ -65,11 +66,12 @@ class ValidationAgent:
             if temperature is None:
                 raise ValueError("Temperature configuration is missing in Langfuse prompt config")
             
-            logger.info(f"✅ Using Langfuse model config - model: {model}, temperature: {temperature}")
+            logger.info(f"✅ Using Langfuse model config - model: {model}, temperature: {temperature}, reasoning_effort: {reasoning_effort}")
             
             # Store configuration for validation operations
             self.model = model
             self.temperature = temperature
+            self.reasoning_effort = reasoning_effort
             
         except Exception as e:
             error_msg = f"Failed to initialize ValidationAgent - cannot fetch model config from Langfuse: {str(e)}"
@@ -174,7 +176,16 @@ class ValidationAgent:
                 )
 
             # Create validation LLM with Langfuse configuration
-            validation_llm = ChatOpenAI(model=self.model, temperature=self.temperature).with_structured_output(DataValidationResult)
+            validation_llm_params = {
+                "model": self.model,
+                "temperature": self.temperature
+            }
+            
+            # Add reasoning_effort if provided (for reasoning models like o1, o3, o4-mini)
+            if self.reasoning_effort:
+                validation_llm_params["reasoning_effort"] = self.reasoning_effort
+                
+            validation_llm = ChatOpenAI(**validation_llm_params).with_structured_output(DataValidationResult)
 
             # Get validation result from LLM
             validation_result = validation_llm.invoke(validation_prompt)

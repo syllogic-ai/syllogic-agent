@@ -89,8 +89,6 @@ def analyze_available_data(
             }
         )
 
-
-
 @tool
 def plan_widget_tasks(
     state: Annotated[TopLevelSupervisorState, InjectedState],
@@ -129,6 +127,7 @@ def plan_widget_tasks(
             # Extract required model and temperature from Langfuse config
             model = prompt_config.get("model")
             temperature = prompt_config.get("temperature")
+            reasoning_effort = prompt_config.get("reasoning_effort")
             
             # Validate required configuration
             if not model:
@@ -136,7 +135,7 @@ def plan_widget_tasks(
             if temperature is None:
                 raise ValueError("Temperature configuration is missing in Langfuse prompt config")
             
-            logger.info(f"✅ Using Langfuse model config - model: {model}, temperature: {temperature}")
+            logger.info(f"✅ Using Langfuse model config - model: {model}, temperature: {temperature}, reasoning_effort: {reasoning_effort}")
             
             # Compile the prompt with dynamic variables from Langfuse (REQUIRED)
             planning_prompt = compile_prompt(
@@ -170,7 +169,16 @@ def plan_widget_tasks(
             )
 
         # Initialize planning LLM with Langfuse configuration
-        planning_llm = ChatOpenAI(model=model, temperature=temperature)
+        planning_llm_params = {
+            "model": model,
+            "temperature": temperature
+        }
+        
+        # Add reasoning_effort if provided (for reasoning models like o1, o3, o4-mini)
+        if reasoning_effort:
+            planning_llm_params["reasoning_effort"] = reasoning_effort
+            
+        planning_llm = ChatOpenAI(**planning_llm_params)
         planning_llm_structured = planning_llm.with_structured_output(TaskCreationPlan)
 
         # Get structured AI planning response
@@ -194,6 +202,7 @@ def plan_widget_tasks(
                 dashboard_id=state.dashboard_id,
                 chat_id=state.chat_id,
                 widget_id=task_request.widget_id,
+                reference_widget_id=task_request.reference_widget_id,
                 task_status="pending"  # Always create as pending
             )
             updated_tasks.append(new_task)
@@ -235,66 +244,62 @@ def plan_widget_tasks(
 # delegate_widget_task REMOVED - redundant with plan_widget_tasks + execute_widget_tasks workflow
 
 
-@tool
-def check_task_status(
-    state: Annotated[TopLevelSupervisorState, InjectedState],
-    tool_call_id: Annotated[str, InjectedToolCallId],
+def _generate_task_status_report(
+    state: TopLevelSupervisorState, 
+    tool_call_id: str
 ) -> Command:
-    """Check the status of all delegated tasks."""
-    try:
-        if not state.delegated_tasks:
-            message = "No tasks have been delegated yet."
-            return Command(
-                update={
-                    "messages": [ToolMessage(content=message, tool_call_id=tool_call_id)],
-                }
-            )
-        
-        status_report = []
-        status_report.append(f"Total tasks: {len(state.delegated_tasks)}")
-        
-        pending_tasks = get_pending_tasks(state)
-        in_progress_tasks = [t for t in state.delegated_tasks if t.task_status == "in_progress"]
-        completed_tasks = [t for t in state.delegated_tasks if t.task_status == "completed"]
-        failed_tasks = [t for t in state.delegated_tasks if t.task_status == "failed"]
-        
-        status_report.append(f"Pending: {len(pending_tasks)}")
-        status_report.append(f"In Progress: {len(in_progress_tasks)}")
-        status_report.append(f"Completed: {len(completed_tasks)}")
-        status_report.append(f"Failed: {len(failed_tasks)}")
-        
-        # Check if all tasks are complete
-        all_completed = len(completed_tasks) == len(state.delegated_tasks) and len(state.delegated_tasks) > 0
-        if all_completed:
-            status_report.append("✅ All tasks are completed!")
-        
-        status_message = "\n".join(status_report)
-        
+    """Helper function to generate task status report (consolidated from check_task_status)."""
+    if not state.delegated_tasks:
+        message = "No tasks have been delegated yet."
         return Command(
             update={
-                "all_tasks_completed": all_completed,
-                "messages": [ToolMessage(content=status_message, tool_call_id=tool_call_id)],
+                "messages": [ToolMessage(content=message, tool_call_id=tool_call_id)],
             }
         )
-        
-    except Exception as e:
-        error_msg = f"Error checking task status: {str(e)}"
-        logger.error(error_msg)
-        return Command(
-            update={
-                "error_messages": state.error_messages + [error_msg],
-                "messages": [ToolMessage(content=error_msg, tool_call_id=tool_call_id)],
-            }
-        )
+    
+    status_report = []
+    status_report.append(f"📊 **TASK STATUS REPORT**")
+    status_report.append(f"Total tasks: {len(state.delegated_tasks)}")
+    
+    pending_tasks = get_pending_tasks(state)
+    in_progress_tasks = [t for t in state.delegated_tasks if t.task_status == "in_progress"]
+    completed_tasks = [t for t in state.delegated_tasks if t.task_status == "completed"]
+    failed_tasks = [t for t in state.delegated_tasks if t.task_status == "failed"]
+    
+    status_report.append(f"• Pending: {len(pending_tasks)}")
+    status_report.append(f"• In Progress: {len(in_progress_tasks)}")
+    status_report.append(f"• Completed: {len(completed_tasks)}")
+    status_report.append(f"• Failed: {len(failed_tasks)}")
+    
+    # Check if all tasks are complete
+    all_completed = len(completed_tasks) == len(state.delegated_tasks) and len(state.delegated_tasks) > 0
+    if all_completed:
+        status_report.append("\n✅ **All tasks are completed!**")
+    
+    status_message = "\n".join(status_report)
+    
+    return Command(
+        update={
+            "all_tasks_completed": all_completed,
+            "messages": [ToolMessage(content=status_message, tool_call_id=tool_call_id)],
+        }
+    )
+
+
 
 
 @tool
 def execute_widget_tasks(
     state: Annotated[TopLevelSupervisorState, InjectedState],
     tool_call_id: Annotated[str, InjectedToolCallId],
+    check_only: bool = False
 ) -> Command:
-    """Execute pending widget tasks by directly invoking widget_agent_team subgraph."""
+    """Execute pending widget tasks OR check task status (consolidated functionality)."""
     try:
+        # If check_only is True, just return status report
+        if check_only:
+            return _generate_task_status_report(state, tool_call_id)
+        
         # Find pending widget tasks
         pending_tasks = [
             task for task in state.delegated_tasks 
@@ -308,6 +313,69 @@ def execute_widget_tasks(
                     "messages": [ToolMessage(content=message, tool_call_id=tool_call_id)],
                 }
             )
+        
+        # Initialize dependency tracking variables
+        dependencies_resolved = 0
+        has_text_blocks_needing_charts = any(
+            task.widget_type == "text" and 
+            "bar chart" in task.task_instructions.lower() and
+            "reference_widget_id" in task.task_instructions.lower() and
+            not task.reference_widget_id
+            for task in pending_tasks
+        )
+        
+        # If we have text blocks that need chart references but haven't been resolved
+        if has_text_blocks_needing_charts and state.completed_widget_ids:
+            logger.info("Automatically resolving task dependencies before executing text block tasks")
+            
+            for task in state.delegated_tasks:
+                # Look for text block tasks that need chart widget references
+                if (task.widget_type == "text" and 
+                    task.task_status == "pending" and 
+                    "bar chart" in task.task_instructions.lower() and
+                    "reference_widget_id" in task.task_instructions.lower()):
+                    
+                    # Find a completed chart task to reference
+                    chart_task_id = None
+                    chart_widget_id = None
+                    
+                    # Look for completed chart tasks
+                    for other_task in state.delegated_tasks:
+                        if (other_task.widget_type in ["bar", "line", "pie", "area", "radial"] and 
+                            other_task.task_status == "completed" and
+                            other_task.task_id in state.completed_widget_ids):
+                            chart_task_id = other_task.task_id
+                            chart_widget_id = state.completed_widget_ids[other_task.task_id]
+                            break
+                    
+                    if chart_widget_id:
+                        # Update the text block task with the actual chart widget ID
+                        task.reference_widget_id = chart_widget_id
+                        updated_task_instructions = task.task_instructions.replace(
+                            "set this task's 'reference_widget_id' to that bar chart's widget_id",
+                            f"reference_widget_id is now set to {chart_widget_id}"
+                        )
+                        task.task_instructions = updated_task_instructions
+                        dependencies_resolved += 1
+                        
+                        logger.info(f"Auto-resolved dependency: Text task {task.task_id} now references chart widget {chart_widget_id}")
+            
+            # Update pending_tasks list after dependency resolution
+            pending_tasks = [
+                task for task in state.delegated_tasks 
+                if task.target_agent == "widget_agent_team" and task.task_status == "pending"
+            ]
+            
+            if dependencies_resolved > 0:
+                logger.info(f"Successfully auto-resolved {dependencies_resolved} dependencies, proceeding with task execution")
+            else:
+                logger.warning("No dependencies could be auto-resolved")
+                return Command(
+                    update={
+                        "current_reasoning": "Could not auto-resolve task dependencies",
+                        "messages": [ToolMessage(content="Could not automatically resolve task dependencies. No matching chart tasks found.", tool_call_id=tool_call_id)],
+                    }
+                )
         
         # Process the first pending task (one at a time for now)
         current_task = pending_tasks[0]
@@ -328,6 +396,7 @@ def execute_widget_tasks(
             "chat_id": current_task.chat_id,
             "file_ids": current_task.file_ids,
             "widget_id": current_task.widget_id or str(uuid.uuid4()),  # Generate ID if None
+            "reference_widget_id": current_task.reference_widget_id,  # For text blocks referencing charts
             "title": current_task.title,
             "description": current_task.description,
             "task_status": "in_progress",
@@ -352,6 +421,8 @@ def execute_widget_tasks(
         
         # Update task status based on widget result
         updated_tasks = []
+        updated_completed_widget_ids = state.completed_widget_ids.copy()
+        
         for task in state.delegated_tasks:
             if task.task_id == current_task.task_id:
                 # Update task with result
@@ -365,15 +436,27 @@ def execute_widget_tasks(
                 else:
                     task.result = f"Widget {current_task.operation} operation completed successfully"
                     
+                    # Capture the actual widget_id from the completed task
+                    actual_widget_id = widget_result.get("widget_id")
+                    if actual_widget_id and task.task_status == "completed":
+                        updated_completed_widget_ids[task.task_id] = actual_widget_id
+                        logger.info(f"Captured completed widget ID: {actual_widget_id} for task {task.task_id}")
+                    
             updated_tasks.append(task)
         
+        # Create execution message including dependency resolution if it occurred
         execution_message = f"✅ **WIDGET TASK EXECUTED**\n\nCompleted {current_task.operation} {current_task.widget_type} widget task\nStatus: {widget_result.get('task_status', 'completed')}"
+        
+        # Add dependency resolution message if we resolved any
+        if has_text_blocks_needing_charts and dependencies_resolved > 0:
+            execution_message += f"\n\n🔗 **Auto-resolved {dependencies_resolved} task dependency(ies)** before execution."
         
         logger.info(f"Widget task {current_task.task_id} completed with status: {widget_result.get('task_status')}")
         
         return Command(
             update={
                 "delegated_tasks": updated_tasks,
+                "completed_widget_ids": updated_completed_widget_ids,
                 "supervisor_status": "analyzing",  # Return to analyzing to check for more tasks
                 "current_reasoning": f"Widget task completed: {widget_result.get('task_status', 'completed')}",
                 "updated_at": datetime.now(),
@@ -394,48 +477,68 @@ def execute_widget_tasks(
 
 
 @tool
-def generate_error_response(
-    failed_tool: str,
-    error_messages: List[str],
-    user_prompt: str,
+def finalize_response(
+    final_message: str,
     state: Annotated[TopLevelSupervisorState, InjectedState],
     tool_call_id: Annotated[str, InjectedToolCallId],
+    is_error: bool = False,
+    failed_tool: str = None,
+    error_messages: List[str] = None
 ) -> Command:
-    """Generate an AI-powered error response when tools fail repeatedly."""
+    """Finalize the response (success or error) - consolidated functionality."""
     try:
-        # Create a user-friendly error message
-        error_summary = f"I encountered repeated issues while trying to {failed_tool}. "
-        
-        if failed_tool == "analyze_available_data":
-            error_summary += "I was unable to access or analyze the data files needed for your request. "
-        elif failed_tool == "plan_widget_tasks":
-            error_summary += "I had trouble planning the appropriate widgets for your request. "
-        elif failed_tool == "delegate_widget_task":
-            error_summary += "I couldn't successfully delegate the widget creation task. "
+        if is_error:
+            # Handle error case (consolidated from generate_error_response)
+            error_summary = f"I encountered repeated issues while trying to {failed_tool}. " if failed_tool else "I encountered technical difficulties. "
+            
+            if failed_tool == "analyze_available_data":
+                error_summary += "I was unable to access or analyze the data files needed for your request. "
+            elif failed_tool == "plan_widget_tasks":
+                error_summary += "I had trouble planning the appropriate widgets for your request. "
+            elif failed_tool == "execute_widget_tasks":
+                error_summary += "I couldn't successfully execute the widget creation tasks. "
+            else:
+                error_summary += "There was a technical issue with the system. "
+            
+            # Add specific error details if available
+            if error_messages:
+                recent_errors = error_messages[-3:]  # Show last 3 errors
+                error_details = "\\n".join([f"• {error}" for error in recent_errors])
+                error_summary += f"\\n\\nTechnical details:\\n{error_details}"
+            
+            error_summary += "\\n\\nPlease try your request again later, or contact support if the issue persists."
+            
+            logger.error(f"Top level supervisor failed: {error_summary}")
+            
+            return Command(
+                goto=END,
+                update={
+                    "final_response": error_summary,
+                    "supervisor_status": "failed",
+                    "updated_at": datetime.now(),
+                    "messages": [ToolMessage(content=error_summary, tool_call_id=tool_call_id)],
+                }
+            )
         else:
-            error_summary += "There was a technical issue with the system. "
-        
-        # Add specific error details if available
-        if error_messages:
-            recent_errors = error_messages[-3:]  # Show last 3 errors
-            error_details = "\\n".join([f"• {error}" for error in recent_errors])
-            error_summary += f"\\n\\nTechnical details:\\n{error_details}"
-        
-        error_summary += "\\n\\nPlease try your request again later, or contact support if the issue persists."
-        
-        return Command(
-            goto=END,
-            update={
-                "final_response": error_summary,
-                "supervisor_status": "failed",
-                "updated_at": datetime.now(),
-                "messages": [ToolMessage(content=error_summary, tool_call_id=tool_call_id)],
-            }
-        )
+            # Handle success case
+            completion_message = f"Response finalized: {final_message}"
+            
+            logger.info("Top level supervisor completed all tasks")
+            
+            return Command(
+                goto=END,
+                update={
+                    "final_response": final_message,
+                    "supervisor_status": "completed",
+                    "updated_at": datetime.now(),
+                    "messages": [ToolMessage(content=completion_message, tool_call_id=tool_call_id)],
+                }
+            )
         
     except Exception as e:
-        fallback_message = f"I'm sorry, but I encountered technical difficulties while processing your request: '{user_prompt}'. Please try again later or contact support."
-        logger.error(f"Error generating error response: {e}")
+        # Fallback error handling
+        fallback_message = f"I'm sorry, but I encountered technical difficulties while processing your request. Please try again later or contact support."
+        logger.error(f"Error finalizing response: {e}")
         return Command(
             goto=END,
             update={
@@ -447,110 +550,123 @@ def generate_error_response(
         )
 
 
-@tool
-def finalize_response(
-    final_message: str,
-    state: Annotated[TopLevelSupervisorState, InjectedState],
-    tool_call_id: Annotated[str, InjectedToolCallId],
-) -> Command:
-    """Finalize the response when all tasks are completed."""
-    try:
-        completion_message = f"Response finalized: {final_message}"
-        
-        logger.info("Top level supervisor completed all tasks")
-        
-        return Command(
-            goto=END,
-            update={
-                "final_response": final_message,
-                "supervisor_status": "completed",
-                "updated_at": datetime.now(),
-                "messages": [ToolMessage(content=completion_message, tool_call_id=tool_call_id)],
-            }
-        )
-        
-    except Exception as e:
-        error_msg = f"Error finalizing response: {str(e)}"
-        logger.error(error_msg)
-        return Command(
-            update={
-                "error_messages": state.error_messages + [error_msg],
-                "supervisor_status": "failed",
-                "updated_at": datetime.now(),
-                "messages": [ToolMessage(content=error_msg, tool_call_id=tool_call_id)],
-            }
-        )
-
-
 # Define the tools available to the supervisor
 supervisor_tools = [
-    analyze_available_data,
-    plan_widget_tasks,
-    execute_widget_tasks,
-    check_task_status,
-    generate_error_response,
-    finalize_response
+    analyze_available_data,    # Data analysis
+    plan_widget_tasks,         # Task planning + dependency resolution
+    execute_widget_tasks,      # Task execution + status checking  
+    finalize_response         # Response finalization + error handling
 ]
 
 # Create the supervisor agent using create_react_agent with structured output
-def create_top_level_supervisor(model_name: Optional[str] = None):
+def create_top_level_supervisor(state: TopLevelSupervisorState, model_name: Optional[str] = None):
     """Create the top-level supervisor agent with Langfuse prompt and model configuration.
     
     This function REQUIRES Langfuse to be available and will fail if prompts or model 
-    configuration cannot be fetched from Langfuse.
+    configuration cannot be fetched from Langfuse. It compiles the prompt with dynamic
+    variables from the current state.
+    
+    Args:
+        state: The current supervisor state containing user_prompt and other context
+        model_name: Optional model name to override the Langfuse configuration
     
     Raises:
         RuntimeError: If Langfuse is not available or prompts cannot be fetched
         ValueError: If fetched configuration is invalid or incomplete
     """
     
-    # Check if Langfuse is available
+    # Check if Langfuse is available - with better error handling for different execution contexts
     try:
-        from config import LANGFUSE_AVAILABLE
+        try:
+            from config import LANGFUSE_AVAILABLE
+        except ImportError:
+            # Handle path issues similar to the prompts import above
+            import sys
+            import os
+            src_path = os.path.join(os.path.dirname(__file__), '..', '..', '..')
+            if src_path not in sys.path:
+                sys.path.insert(0, src_path)
+            from config import LANGFUSE_AVAILABLE
+            
         if not LANGFUSE_AVAILABLE:
+            # Try direct import to give a more specific error
+            try:
+                from langfuse import Langfuse
+                # Langfuse is actually available, but config says it's not
+                logger.warning("Langfuse import works but LANGFUSE_AVAILABLE is False in config")
+            except ImportError as langfuse_error:
+                raise RuntimeError(
+                    f"Langfuse is not available. Cannot create top_level_supervisor without Langfuse integration. "
+                    f"Please install langfuse: pip install langfuse. Import error: {langfuse_error}"
+                )
+    except ImportError as config_error:
+        # Try direct langfuse import to see if the issue is with config import or langfuse itself
+        try:
+            from langfuse import Langfuse
+            logger.warning(f"Config import failed even with path adjustment ({config_error}) but langfuse is available directly")
+        except ImportError as langfuse_error:
             raise RuntimeError(
-                "Langfuse is not available. Cannot create top_level_supervisor without Langfuse integration. "
-                "Please install langfuse: pip install langfuse"
+                f"Cannot import Langfuse. Please ensure langfuse is installed: pip install langfuse. "
+                f"Config error: {config_error}, Langfuse error: {langfuse_error}"
             )
-    except ImportError:
-        raise RuntimeError(
-            "Cannot import Langfuse configuration. Please ensure langfuse is installed and configured."
-        )
+        except Exception as langfuse_error:
+            raise RuntimeError(
+                f"Config import failed and langfuse has issues. Config error: {config_error}, "
+                f"Langfuse error: {langfuse_error}"
+            )
     
     try:
-        # Fetch prompt from Langfuse (REQUIRED)
-        logger.info("Fetching top_level_supervisor prompt from Langfuse...")
-        langfuse_prompt = retrieve_prompt("top_level_supervisor/top_level_supervisor", label="latest")
+        # Prepare runtime variables from current state
+        logger.info("Preparing runtime variables for top_level_supervisor prompt compilation...")
         
-        # Handle different prompt formats (string or chat messages)
-        # Note: We get the raw prompt template here - variables will be injected at runtime
-        if hasattr(langfuse_prompt, 'prompt'):
-            prompt_content = langfuse_prompt.prompt
-            # If it's a list (chat messages), convert to string
-            if isinstance(prompt_content, list):
-                system_prompt = "\n".join([msg.get('content', str(msg)) for msg in prompt_content])
-            else:
-                system_prompt = str(prompt_content)
-        else:
-            system_prompt = str(langfuse_prompt)
+        # Create a comprehensive state analysis for the prompt
+        state_analysis = {
+            "supervisor_status": state.supervisor_status,
+            "available_data_summary": state.available_data_summary or "No data summary available",
+            "available_files_count": len(state.available_files),
+            "available_files": state.available_files,
+            "delegated_tasks_count": len(state.delegated_tasks),
+            "delegated_tasks": [{"title": task.title, "status": task.task_status, "widget_type": task.widget_type} for task in state.delegated_tasks],
+            "context_widget_ids": state.context_widget_ids,
+            "error_messages": state.error_messages,
+            "current_reasoning": state.current_reasoning or "Starting analysis",
+            "all_tasks_completed": state.all_tasks_completed,
+            "remaining_steps": state.remaining_steps,
+            "dashboard_id": state.dashboard_id,
+            "chat_id": state.chat_id,
+            "user_id": state.user_id,
+            "request_id": state.request_id
+        }
         
-        # Store the raw langfuse prompt for runtime compilation with variables
-        raw_langfuse_prompt = langfuse_prompt
+        prompt_variables = {
+            "user_prompt": state.user_prompt,
+            "current_state_analysis": state_analysis,
+        }
         
-        # Ensure prompt is a string before validation
-        if not isinstance(system_prompt, str):
-            logger.warning(f"System prompt is not a string, converting: {type(system_prompt)}")
-            if isinstance(system_prompt, list):
-                system_prompt = "\n".join([str(item) for item in system_prompt])
-            else:
-                system_prompt = str(system_prompt)
+        # Compile the prompt with dynamic variables from Langfuse (REQUIRED)
+        logger.info("Compiling top_level_supervisor prompt from Langfuse with dynamic variables...")
+        system_prompt = compile_prompt(
+            "top_level_supervisor/top_level_supervisor", 
+            prompt_variables,
+            label="latest"
+        )
         
-        # Validate prompt content
-        if not system_prompt or len(system_prompt.strip()) == 0:
-            raise ValueError("Retrieved prompt from Langfuse is empty or invalid")
+        # Validate compiled prompt (handle different formats)
+        if not system_prompt:
+            raise ValueError("Compiled prompt from Langfuse is empty or None")
+        
+        # Convert to string if needed and validate
+        system_prompt_str = str(system_prompt)
+        if not system_prompt_str or len(system_prompt_str.strip()) == 0:
+            raise ValueError("Compiled prompt from Langfuse is empty or invalid")
+        
+        # Use the string version for the LLM
+        system_prompt = system_prompt_str
+        
+        logger.info(f"✅ Successfully compiled Langfuse supervisor prompt with {len(prompt_variables)} variables")
             
     except Exception as e:
-        error_msg = f"Failed to fetch prompt 'top_level_supervisor' from Langfuse: {str(e)}"
+        error_msg = f"Failed to compile prompt 'top_level_supervisor' from Langfuse: {str(e)}"
         logger.error(error_msg)
         raise RuntimeError(error_msg) from e
     
@@ -562,6 +678,7 @@ def create_top_level_supervisor(model_name: Optional[str] = None):
         # Extract required configuration
         model = prompt_config.get("model")
         temperature = prompt_config.get("temperature")
+        reasoning_effort = prompt_config.get("reasoning_effort")
         
         # Validate configuration
         if not model:
@@ -574,7 +691,7 @@ def create_top_level_supervisor(model_name: Optional[str] = None):
             logger.info(f"Overriding Langfuse model '{model}' with provided model '{model_name}'")
             model = model_name
             
-        logger.info(f"✅ Using Langfuse configuration - model: {model}, temperature: {temperature}")
+        logger.info(f"✅ Using Langfuse configuration - model: {model}, temperature: {temperature}, reasoning_effort: {reasoning_effort}")
         
     except Exception as e:
         error_msg = f"Failed to fetch model configuration from Langfuse: {str(e)}"
@@ -585,10 +702,16 @@ def create_top_level_supervisor(model_name: Optional[str] = None):
     
     try:
         # Initialize the language model with Langfuse configuration
-        llm = ChatOpenAI(
-            model=model,
-            temperature=temperature
-        )
+        llm_params = {
+            "model": model,
+            "temperature": temperature
+        }
+        
+        # Add reasoning_effort if provided (for reasoning models like o1, o3, o4-mini)
+        if reasoning_effort:
+            llm_params["reasoning_effort"] = reasoning_effort
+            
+        llm = ChatOpenAI(**llm_params)
         
         logger.info(f"Creating supervisor with prompt length: {len(system_prompt)}")
         
@@ -691,8 +814,8 @@ def top_level_supervisor(state) -> Dict[str, Any]:
         else:
             supervisor_state = state
             
-        # Create the supervisor agent
-        supervisor_agent = create_top_level_supervisor()
+        # Create the supervisor agent with current state for dynamic variable compilation
+        supervisor_agent = create_top_level_supervisor(supervisor_state)
         
         # Prepare the message for the agent
         user_message = HumanMessage(

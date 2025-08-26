@@ -241,7 +241,8 @@ def create_widget(widget_input: CreateWidgetInput) -> Widget:
     """
     try:
         supabase = _get_supabase_client()
-        widget_id = str(uuid.uuid4())
+        # Use provided widget_id if available, otherwise generate new UUID
+        widget_id = widget_input.widget_id if widget_input.widget_id else str(uuid.uuid4())
 
         # Prepare widget data from input model
         widget_data = {
@@ -255,6 +256,9 @@ def create_widget(widget_input: CreateWidgetInput) -> Widget:
         }
 
         # Add optional fields if provided
+        # NOTE: description field is not in the widgets table schema, so we skip it
+        # if widget_input.description is not None:
+        #     widget_data["description"] = widget_input.description
         if widget_input.data is not None:
             widget_data["data"] = widget_input.data
         if widget_input.sql is not None:

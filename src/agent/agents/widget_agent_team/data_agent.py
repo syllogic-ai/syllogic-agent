@@ -44,6 +44,7 @@ class DataAgent:
             # Extract required model and temperature from main prompt config
             model = main_prompt_config.get("model")
             temperature = main_prompt_config.get("temperature")
+            reasoning_effort = main_prompt_config.get("reasoning_effort")
             
             # Validate required configuration
             if not model:
@@ -51,7 +52,7 @@ class DataAgent:
             if temperature is None:
                 raise ValueError("Temperature configuration is missing in Langfuse main prompt config")
             
-            logger.info(f"✅ Using Langfuse model config - model: {model}, temperature: {temperature}")
+            logger.info(f"✅ Using Langfuse model config - model: {model}, temperature: {temperature}, reasoning_effort: {reasoning_effort}")
             
             # Fetch main data processing prompt (REQUIRED)
             logger.info("Fetching main data processing prompt from Langfuse...")
@@ -152,9 +153,19 @@ class DataAgent:
         # Import ChatOpenAI to create properly configured models
         from langchain_openai import ChatOpenAI
         
+        # Prepare LLM parameters with Langfuse configuration
+        llm_params = {
+            "model": model,
+            "temperature": temperature
+        }
+        
+        # Add reasoning_effort if provided (for reasoning models like o1, o3, o4-mini)
+        if reasoning_effort:
+            llm_params["reasoning_effort"] = reasoning_effort
+        
         # Create the main data processing agent with Langfuse configuration
         self.agent = create_react_agent(
-            model=ChatOpenAI(model=model, temperature=temperature),
+            model=ChatOpenAI(**llm_params),
             tools=[fetch_data_tool, generate_python_code_tool, e2b_sandbox_tool],
             state_schema=ExtendedWidgetState,
             prompt=main_prompt,  # Use Langfuse prompt
@@ -162,7 +173,7 @@ class DataAgent:
 
         # Create code generation sub-agent with Langfuse configuration  
         self.code_generator_agent = create_react_agent(
-            model=ChatOpenAI(model=model, temperature=temperature),
+            model=ChatOpenAI(**llm_params),
             tools=[generate_python_code_tool],
             prompt=code_gen_prompt,  # Use Langfuse prompt
         )
