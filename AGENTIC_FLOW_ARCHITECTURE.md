@@ -46,6 +46,55 @@ The system follows a **Hierarchical Supervisor Pattern** with two main levels:
 └─────────────────────────────────────────────────────────────┘
 ```
 
+### Widget Agent Team Subgraph Architecture
+
+The Widget Agent Team implements a **Supervisor-Worker Pattern** with intelligent routing:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        Widget Agent Team Subgraph                           │
+│                                                                             │
+│  ┌─────────────────┐                                                        │
+│  │ Widget          │                                                        │
+│  │ Supervisor      │                                                        │
+│  │ (LLM Router)    │                                                        │
+│  └─────────┬───────┘                                                        │
+│            │                                                                │
+│            ▼                                                                │
+│  ┌─────────────────────────────────────────────────────────────────────────┐ │
+│  │                        Worker Nodes                                     │ │
+│  │                                                                         │ │
+│  │ ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐ │ │
+│  │ │    Data     │  │ Validation  │  │ Database    │  │  Text Block     │ │ │
+│  │ │    Node     │  │    Node     │  │ Operations  │  │     Node        │ │ │
+│  │ │             │  │             │  │    Node     │  │                 │ │ │
+│  │ │ ┌─────────┐ │  │ ┌─────────┐ │  │ ┌─────────┐ │  │ ┌─────────────┐ │ │ │
+│  │ │ │fetch_   │ │  │ │LLM-based│ │  │ │CREATE   │ │  │ │fetch_widget│ │ │ │
+│  │ │ │data_tool│ │  │ │validator│ │  │ │UPDATE   │ │  │ │_details     │ │ │ │
+│  │ │ └─────────┘ │  │ │with     │ │  │ │DELETE   │ │  │ └─────────────┘ │ │ │
+│  │ │ ┌─────────┐ │  │ │confidence│ │  │ │         │ │  │ ┌─────────────┐ │ │ │
+│  │ │ │generate_│ │  │ │threshold│ │  │ │operations│ │  │ │generate_    │ │ │ │
+│  │ │ │code_tool│ │  │ └─────────┘ │  │ └─────────┘ │  │ │text_content │ │ │ │
+│  │ │ └─────────┘ │  │             │  │             │  │ └─────────────┘ │ │ │
+│  │ │ ┌─────────┐ │  │             │  │             │  │                 │ │ │
+│  │ │ │e2b_     │ │  │             │  │             │  │                 │ │ │
+│  │ │ │sandbox_ │ │  │             │  │             │  │                 │ │ │
+│  │ │ │tool     │ │  │             │  │             │  │                 │ │ │
+│  │ │ └─────────┘ │  │             │  │             │  │                 │ │ │
+│  │ └─────────────┘  └─────────────┘  └─────────────┘  └─────────────────┘ │ │
+│  └─────────────────────────────────────────────────────────────────────────┘ │
+│                                                                             │
+│  Flow: START → Widget Supervisor → [Worker Node] → Widget Supervisor → END  │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Key Characteristics**:
+- **Central Router**: Widget Supervisor uses LLM-based routing decisions
+- **Specialized Workers**: Each node handles specific aspects of widget processing
+- **Dynamic Flow**: Workers return to supervisor for intelligent next-step decisions
+- **Tool Integration**: Each worker has specialized tools for their domain
+- **State Persistence**: Unified state management across all nodes
+
 ### Graph Structure
 
 #### 1. Top-Level Supervisor Graph
@@ -66,18 +115,28 @@ START → top_level_supervisor ⟷ widget_agent_team → END
 
 **State Schema**: `WidgetGraphState`
 - **Entry Point**: `START → widget_supervisor`
-- **Dynamic Routing**: Supervisor makes intelligent routing decisions
+- **Dynamic Routing**: Supervisor makes intelligent routing decisions based on LLM analysis
 - **Nodes**:
-  - `widget_supervisor`: Central coordinator and router
-  - `data`: Data processing and code generation
-  - `validate_data`: Data validation and quality checks
-  - `db_operations_node`: Database CRUD operations
+  - `widget_supervisor`: Central coordinator and router with LLM-based decision making
+  - `data`: Data processing and code generation using create_react_agent
+  - `validate_data`: Data validation and quality checks with confidence scoring
+  - `db_operations_node`: Database CRUD operations (CREATE/UPDATE/DELETE)
   - `text_block_node`: HTML content generation for text widgets
 
 **Flow Pattern**:
 ```
-START → widget_supervisor → [data|validate_data|db_operations_node|text_block_node] → END
+START → widget_supervisor → [data|validate_data|db_operations_node|text_block_node] 
+                    ↑                                    │
+                    └────────────────────────────────────┘
+                           (Return for next decision)
 ```
+
+**Routing Logic**:
+- **Intelligent Analysis**: Widget supervisor analyzes complete state including task progress, data availability, errors, and previous node outcomes
+- **LLM-Based Decisions**: Uses structured output to determine next node based on comprehensive state analysis
+- **Dynamic Adaptation**: Flow adapts based on widget type (chart vs text), operation type, and current completion status
+- **Error Recovery**: Supervisor can route back to appropriate nodes for retry with error context
+- **Completion Detection**: Automatically terminates when database operations complete successfully
 
 ## Agentic Nodes and Their Tools
 

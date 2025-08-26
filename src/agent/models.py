@@ -29,6 +29,9 @@ class CreateWidgetInput(BaseModel):
         default=None, description="Chat ID if created from chat"
     )
     order: Optional[int] = Field(default=None, description="Order for positioning")
+    summary: Optional[str] = Field(
+        default=None, description="Brief VLLM-friendly widget summary"
+    )
 
 
 class UpdateWidgetInput(BaseModel):
@@ -50,6 +53,9 @@ class UpdateWidgetInput(BaseModel):
         default=None, description="Configuration status"
     )
     cache_key: Optional[str] = Field(default=None, description="Cache key")
+    summary: Optional[str] = Field(
+        default=None, description="Brief VLLM-friendly widget summary"
+    )
 
 
 class BackendPayload(BaseModel):
@@ -325,6 +331,9 @@ class Widget(BaseModel):
         default=None, description="Configuration status"
     )
     cache_key: Optional[str] = Field(default=None, description="Cache key")
+    summary: Optional[str] = Field(
+        default=None, description="Brief VLLM-friendly widget summary for accessibility"
+    )
     created_at: Optional[str] = Field(
         default=None, description="ISO timestamp when widget was created"
     )

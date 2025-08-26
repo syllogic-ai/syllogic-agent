@@ -114,11 +114,11 @@ class ValidationAgent:
                     },
                 )
 
-            # Get first 10 rows/items of generated data for validation
-            sample_data = self._get_data_sample(state.widget_config)
+            # Get sample data appropriate for widget type
+            sample_data = self._get_widget_sample(state.widget_config, state.widget_type)
 
-            # Get data schema information
-            data_schema = self._analyze_data_structure(state.widget_config)
+            # Get structure analysis appropriate for widget type
+            data_schema = self._analyze_widget_structure(state.widget_config, state.widget_type)
 
             # Fetch and compile validation prompt from Langfuse with dynamic variables
             try:
@@ -134,11 +134,14 @@ class ValidationAgent:
                     "user_prompt": state.user_prompt,
                     "widget_type": state.widget_type,
                     "operation": state.operation,
+                    "widget_config": json.dumps(state.widget_config, indent=2, default=str),
                     "sample_data": json.dumps(sample_data, indent=2, default=str),
                     "data_schema": json.dumps(data_schema, indent=2),
                     "sample_data_original_count": sampling_info.get("original_count", "unknown"),
                     "sample_data_sampled_count": sampling_info.get("sampled_count", "unknown"),
-                    "sample_data_is_sampled": sampling_info.get("is_sampled", "unknown")
+                    "sample_data_is_sampled": sampling_info.get("is_sampled", "unknown"),
+                    "widget_title": state.title,
+                    "widget_description": state.description
                 }
                 
                 logger.info("Fetching and compiling validation prompt from Langfuse...")
@@ -258,84 +261,125 @@ class ValidationAgent:
                 },
             )
 
-    def _get_data_sample(self, chart_config_data):
+    def _get_widget_sample(self, widget_config, widget_type):
         """
-        Extract first 10 records from ChartConfigSchema data for validation.
+        Extract sample data from widget_config for validation, handling both chart and text widgets.
 
         Args:
-            chart_config_data: Dictionary following ChartConfigSchema structure
+            widget_config: Dictionary containing widget configuration
+            widget_type: Type of widget (chart types or 'text')
 
         Returns:
-            Dictionary: Complete ChartConfigSchema structure with sampled data (first 10 records)
+            Dictionary: Widget configuration with sampled data and metadata
         """
-        if not isinstance(chart_config_data, dict):
-            # Fallback for non-dict data (shouldn't happen with validated schema)
-            return chart_config_data
+        if not isinstance(widget_config, dict):
+            return widget_config
 
-        # Create a copy of the full schema
-        sampled_result = chart_config_data.copy()
+        # Create a copy of the full configuration
+        sampled_result = widget_config.copy()
 
-        # Extract and sample the data array
-        if "data" in chart_config_data and isinstance(chart_config_data["data"], list):
-            # Get first 10 records from the data array
-            original_data = chart_config_data["data"]
-            sampled_data = original_data[:10]
-
-            # Update the result with sampled data
-            sampled_result["data"] = sampled_data
-
-            # Add metadata about sampling
-            sampled_result["_sampling_info"] = {
-                "original_count": len(original_data),
-                "sampled_count": len(sampled_data),
-                "is_sampled": len(original_data) > 10,
-            }
+        if widget_type == "text":
+            # For text widgets, sample the content
+            if "content" in widget_config:
+                content = widget_config["content"]
+                if isinstance(content, str):
+                    # Sample first 1000 characters of text content
+                    original_length = len(content)
+                    sampled_content = content[:1000]
+                    
+                    sampled_result["content"] = sampled_content
+                    sampled_result["_sampling_info"] = {
+                        "original_count": original_length,
+                        "sampled_count": len(sampled_content),
+                        "is_sampled": original_length > 1000,
+                        "content_type": "text_content"
+                    }
+                else:
+                    sampled_result["_sampling_info"] = {
+                        "original_count": 1,
+                        "sampled_count": 1,
+                        "is_sampled": False,
+                        "content_type": "non_text_content"
+                    }
+            else:
+                sampled_result["_sampling_info"] = {
+                    "original_count": 0,
+                    "sampled_count": 0,
+                    "is_sampled": False,
+                    "warning": "Content field is missing for text widget"
+                }
         else:
-            # If data is not a list or doesn't exist, return as-is with warning
-            sampled_result["_sampling_info"] = {
-                "original_count": 0,
-                "sampled_count": 0,
-                "is_sampled": False,
-                "warning": "Data field is not a list or is missing",
-            }
+            # For chart widgets, sample the data array
+            if "data" in widget_config and isinstance(widget_config["data"], list):
+                original_data = widget_config["data"]
+                sampled_data = original_data[:10]
+
+                sampled_result["data"] = sampled_data
+                sampled_result["_sampling_info"] = {
+                    "original_count": len(original_data),
+                    "sampled_count": len(sampled_data),
+                    "is_sampled": len(original_data) > 10,
+                    "content_type": "chart_data"
+                }
+            else:
+                sampled_result["_sampling_info"] = {
+                    "original_count": 0,
+                    "sampled_count": 0,
+                    "is_sampled": False,
+                    "warning": "Data field is not a list or is missing for chart widget",
+                    "content_type": "chart_data"
+                }
 
         return sampled_result
 
-    def _analyze_data_structure(self, chart_config_data):
-        """Analyze the structure and types of ChartConfigSchema data."""
-        if not isinstance(chart_config_data, dict):
+    def _analyze_widget_structure(self, widget_config, widget_type):
+        """Analyze the structure and types of widget configuration data."""
+        if not isinstance(widget_config, dict):
             return {
-                "type": type(chart_config_data).__name__,
-                "value": str(chart_config_data)[:100],
+                "type": type(widget_config).__name__,
+                "value": str(widget_config)[:100],
             }
 
         analysis = {
-            "type": "ChartConfigSchema",
+            "widget_type": widget_type,
             "schema_fields": {},
-            "data_analysis": {},
+            "analysis_type": "text_widget" if widget_type == "text" else "chart_widget",
         }
 
-        # Analyze each schema field
-        schema_fields = [
-            "chartType",
-            "title",
-            "description",
-            "data",
-            "chartConfig",
-            "xAxisConfig",
-        ]
-        for field in schema_fields:
-            if field in chart_config_data:
-                field_value = chart_config_data[field]
-                analysis["schema_fields"][field] = {
-                    "type": type(field_value).__name__,
-                    "present": True,
-                }
+        if widget_type == "text":
+            # Analyze text widget structure
+            text_fields = ["content", "title", "description"]
+            for field in text_fields:
+                if field in widget_config:
+                    field_value = widget_config[field]
+                    analysis["schema_fields"][field] = {
+                        "type": type(field_value).__name__,
+                        "present": True,
+                    }
 
-                # Special analysis for data field
-                if field == "data" and isinstance(field_value, list):
-                    analysis["schema_fields"][field].update(
-                        {
+                    # Special analysis for content field
+                    if field == "content" and isinstance(field_value, str):
+                        analysis["schema_fields"][field].update({
+                            "content_length": len(field_value),
+                            "has_html": "<" in field_value and ">" in field_value,
+                            "preview": field_value[:200] + "..." if len(field_value) > 200 else field_value
+                        })
+                else:
+                    analysis["schema_fields"][field] = {"type": "missing", "present": False}
+        else:
+            # Analyze chart widget structure (ChartConfigSchema)
+            chart_fields = ["chartType", "title", "description", "data", "chartConfig", "xAxisConfig"]
+            for field in chart_fields:
+                if field in widget_config:
+                    field_value = widget_config[field]
+                    analysis["schema_fields"][field] = {
+                        "type": type(field_value).__name__,
+                        "present": True,
+                    }
+
+                    # Special analysis for data field
+                    if field == "data" and isinstance(field_value, list):
+                        analysis["schema_fields"][field].update({
                             "length": len(field_value),
                             "sample_keys": list(field_value[0].keys())
                             if field_value and isinstance(field_value[0], dict)
@@ -343,26 +387,23 @@ class ValidationAgent:
                             "item_type": type(field_value[0]).__name__
                             if field_value
                             else "unknown",
-                        }
-                    )
-                # Special analysis for chartConfig
-                elif field == "chartConfig" and isinstance(field_value, dict):
-                    analysis["schema_fields"][field].update(
-                        {
+                        })
+                    # Special analysis for chartConfig
+                    elif field == "chartConfig" and isinstance(field_value, dict):
+                        analysis["schema_fields"][field].update({
                             "config_keys": list(field_value.keys()),
                             "config_count": len(field_value),
-                        }
-                    )
-                # Special analysis for xAxisConfig
-                elif field == "xAxisConfig" and isinstance(field_value, dict):
-                    analysis["schema_fields"][field].update(
-                        {"dataKey": field_value.get("dataKey", "not_specified")}
-                    )
-            else:
-                analysis["schema_fields"][field] = {"type": "missing", "present": False}
+                        })
+                    # Special analysis for xAxisConfig
+                    elif field == "xAxisConfig" and isinstance(field_value, dict):
+                        analysis["schema_fields"][field].update(
+                            {"dataKey": field_value.get("dataKey", "not_specified")}
+                        )
+                else:
+                    analysis["schema_fields"][field] = {"type": "missing", "present": False}
 
         # Add sampling info if present
-        if "_sampling_info" in chart_config_data:
-            analysis["sampling_info"] = chart_config_data["_sampling_info"]
+        if "_sampling_info" in widget_config:
+            analysis["sampling_info"] = widget_config["_sampling_info"]
 
         return analysis

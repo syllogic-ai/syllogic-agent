@@ -269,6 +269,8 @@ def create_widget(widget_input: CreateWidgetInput) -> Widget:
             widget_data["chat_id"] = widget_input.chat_id
         if widget_input.order is not None:
             widget_data["order"] = widget_input.order
+        if widget_input.summary is not None:
+            widget_data["summary"] = widget_input.summary
 
         # Insert widget into database
         result = supabase.table("widgets").insert(widget_data).execute()
@@ -325,6 +327,8 @@ def update_widget(update_input: UpdateWidgetInput) -> Widget:
             update_data["is_configured"] = update_input.is_configured
         if update_input.cache_key is not None:
             update_data["cache_key"] = update_input.cache_key
+        if update_input.summary is not None:
+            update_data["summary"] = update_input.summary
 
         # Update widget in database
         result = (

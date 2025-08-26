@@ -11,6 +11,7 @@ from langgraph.types import Command
 from agent.models import CreateWidgetInput, UpdateWidgetInput, WidgetAgentState
 
 from actions.utils import import_actions_dashboard
+from .tools.widget_summary import generate_widget_summary
 
 
 class DatabaseAgent:
@@ -65,6 +66,20 @@ class DatabaseAgent:
                 if not widget_id:
                     widget_id = f"wid_{str(uuid.uuid4())}"
                 
+                # Generate widget summary using Langfuse
+                try:
+                    widget_summary = generate_widget_summary(
+                        widget_type=widget_type,
+                        title=title,
+                        description=state.description or "",
+                        widget_config=state.widget_config or {},
+                        tool_call_id=f"summary_gen_{widget_id}"
+                    )
+                except Exception as e:
+                    # Log but don't fail the operation if summary generation fails
+                    widget_summary = f"Widget of type {widget_type} titled '{title}'"
+                    print(f"Warning: Summary generation failed: {e}")
+                
                 # Create widget input using unified widget_config
                 create_input = CreateWidgetInput(
                     dashboard_id=dashboard_id,
@@ -74,6 +89,7 @@ class DatabaseAgent:
                     widget_id=widget_id,  # Pass the widget_id to be used
                     chat_id=state.chat_id,
                     description=state.description,
+                    summary=widget_summary,  # Add the generated summary
                     data={"data": state.widget_config.get("data", []) if state.widget_config else []},  # Extract data from widget_config
                 )
                 
@@ -97,6 +113,20 @@ class DatabaseAgent:
                 )
                 
             elif operation == "UPDATE":
+                # Generate updated widget summary using Langfuse
+                try:
+                    widget_summary = generate_widget_summary(
+                        widget_type=widget_type,
+                        title=title,
+                        description=state.description or "",
+                        widget_config=state.widget_config or {},
+                        tool_call_id=f"summary_update_{state.widget_id}"
+                    )
+                except Exception as e:
+                    # Log but don't fail the operation if summary generation fails
+                    widget_summary = f"Updated widget of type {widget_type} titled '{title}'"
+                    print(f"Warning: Summary generation failed for update: {e}")
+                
                 # Update existing widget using unified widget_config
                 update_input = UpdateWidgetInput(
                     widget_id=state.widget_id,
@@ -104,6 +134,7 @@ class DatabaseAgent:
                     widget_type=widget_type,
                     config=state.widget_config or {},  # Use unified widget_config
                     description=state.description,
+                    summary=widget_summary,  # Add the updated summary
                     data={"data": state.widget_config.get("data", []) if state.widget_config else []},  # Extract data from widget_config
                 )
                 
