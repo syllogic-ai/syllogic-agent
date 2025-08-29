@@ -11,8 +11,7 @@ from langgraph.types import Command
 from agent.models import FileSampleData, FileSchema, WidgetAgentState
 from config import get_langfuse_callback_handler, LANGFUSE_AVAILABLE
 from .tools.fetch_data import fetch_data_tool
-from .tools.code_generation import generate_python_code_tool
-from .tools.code_execution import e2b_sandbox_tool
+from .tools.code_generation_and_execution import generate_and_execute_python_code_tool
 
 # Handle imports for different execution contexts
 try:
@@ -73,25 +72,7 @@ class DataAgent:
             if not main_prompt or len(main_prompt.strip()) == 0:
                 raise ValueError("Main data processing prompt from Langfuse is empty or invalid")
             
-            # Fetch code generator prompt (REQUIRED)
-            logger.info("Fetching code generator prompt from Langfuse...")
-            code_gen_prompt_obj = retrieve_prompt("widget_agent_team/data/tools/generate_python_code", label="latest")
-            
-            # Handle different prompt formats
-            if hasattr(code_gen_prompt_obj, 'prompt'):
-                code_gen_prompt_content = code_gen_prompt_obj.prompt
-                if isinstance(code_gen_prompt_content, list):
-                    code_gen_prompt = "\n".join([msg.get('content', str(msg)) for msg in code_gen_prompt_content])
-                else:
-                    code_gen_prompt = str(code_gen_prompt_content)
-            else:
-                code_gen_prompt = str(code_gen_prompt_obj)
-            
-            # Validate code generator prompt
-            if not code_gen_prompt or len(code_gen_prompt.strip()) == 0:
-                raise ValueError("Code generator prompt from Langfuse is empty or invalid")
-            
-            logger.info("✅ Successfully fetched both prompts from Langfuse")
+            logger.info("✅ Successfully fetched main prompt from Langfuse")
             
         except Exception as e:
             error_msg = f"Failed to initialize DataAgent - cannot fetch model config/prompts from Langfuse: {str(e)}"
@@ -167,16 +148,9 @@ class DataAgent:
         # Create the main data processing agent with Langfuse configuration
         self.agent = create_react_agent(
             model=ChatOpenAI(**llm_params),
-            tools=[fetch_data_tool, generate_python_code_tool, e2b_sandbox_tool],
+            tools=[fetch_data_tool, generate_and_execute_python_code_tool],
             state_schema=ExtendedWidgetState,
             prompt=main_prompt,  # Use Langfuse prompt
-        )
-
-        # Create code generation sub-agent with Langfuse configuration  
-        self.code_generator_agent = create_react_agent(
-            model=ChatOpenAI(**llm_params),
-            tools=[generate_python_code_tool],
-            prompt=code_gen_prompt,  # Use Langfuse prompt
         )
         
         logger.info("✅ DataAgent successfully initialized with Langfuse prompts and configuration")
@@ -194,8 +168,7 @@ File IDs: {state.file_ids}
             
 Please:
 1. Use fetch_data_tool (no parameters needed - extracts file_ids from state)
-2. Use generate_python_code_tool (no parameters needed - extracts requirements from state)
-3. Use e2b_sandbox_tool (no parameters needed - executes generated code from state)
+2. Use generate_and_execute_python_code_tool (no parameters needed - this single tool will generate Python code AND execute it in E2B sandbox)
             """
 
             # Convert WidgetAgentState to ExtendedWidgetState format

@@ -253,44 +253,41 @@ class ChartConfigSchema(BaseModel):
         }
 
 
-# Chat Models for chat functionality
+# Chat and Message Models
 
 
-class ConversationMessage(BaseModel):
-    """Individual message within a chat conversation."""
+class Message(BaseModel):
+    """Message model representing individual chat messages in the database."""
 
-    role: Literal["user", "assistant", "system"] = Field(
+    id: str = Field(description="Unique identifier for the message")
+    chat_id: str = Field(description="ID of the chat this message belongs to")
+    role: Literal["user", "ai", "system"] = Field(
         description="Role of the message sender"
     )
-    message: str = Field(description="Content of the message")
-    timestamp: str = Field(description="ISO timestamp when message was created")
-    context_widget_ids: Optional[List[str]] = Field(
-        default=None, description="Widget IDs referenced in this message"
+    content: Optional[str] = Field(default=None, description="Content of the message")
+    message_type: Optional[str] = Field(
+        default=None, description="Type of message ('chat', 'task-list', 'tool-usage')"
     )
-    target_widget_type: Optional[str] = Field(
-        default=None, description="Target widget type for this message"
+    task_group_id: Optional[str] = Field(
+        default=None, description="Links message to a group of related tasks"
     )
-    target_chart_sub_type: Optional[str] = Field(
-        default=None, description="Target chart subtype for this message"
-    )
+    created_at: str = Field(description="ISO timestamp when message was created")
+    updated_at: str = Field(description="ISO timestamp when message was last updated")
 
 
-class ChatMessageInput(BaseModel):
-    """Input model for creating chat messages."""
+class CreateMessageInput(BaseModel):
+    """Input model for creating messages."""
 
     chat_id: str = Field(description="ID of the chat to append message to")
-    role: Literal["user", "assistant", "system"] = Field(
+    role: Literal["user", "ai", "system"] = Field(
         description="Role of the message sender"
     )
-    message: str = Field(description="Content of the message")
-    context_widget_ids: Optional[List[str]] = Field(
-        default=None, description="Widget IDs referenced in this message"
+    content: Optional[str] = Field(default=None, description="Content of the message")
+    message_type: Optional[str] = Field(
+        default="chat", description="Type of message ('chat', 'task-list', 'tool-usage')"
     )
-    target_widget_type: Optional[str] = Field(
-        default=None, description="Target widget type for this message"
-    )
-    target_chart_sub_type: Optional[str] = Field(
-        default=None, description="Target chart subtype for this message"
+    task_group_id: Optional[str] = Field(
+        default=None, description="Links message to a group of related tasks"
     )
 
 
@@ -302,12 +299,74 @@ class Chat(BaseModel):
     dashboard_id: str = Field(
         description="ID of the dashboard this chat is associated with"
     )
-    title: Optional[str] = Field(default=None, description="Title of the chat")
-    conversation: List[Dict[str, Any]] = Field(
-        default_factory=list, description="Array of conversation messages"
+    title: Optional[str] = Field(default="Dashboard Chat", description="Title of the chat")
+    last_message_at: Optional[str] = Field(
+        default=None, description="ISO timestamp of last message"
     )
+    message_count: int = Field(default=0, description="Number of messages in chat")
     created_at: str = Field(description="ISO timestamp when chat was created")
     updated_at: str = Field(description="ISO timestamp when chat was last updated")
+
+
+# Task Models
+
+
+class Task(BaseModel):
+    """Task model representing job tasks and progress in the database."""
+
+    id: str = Field(description="Unique identifier for the task")
+    chat_id: str = Field(description="ID of the chat this task belongs to")
+    dashboard_id: str = Field(description="Dashboard identifier for the task")
+    task_group_id: str = Field(
+        description="Group ID linking multiple tasks from same AI response"
+    )
+    title: str = Field(description="Task title (e.g., 'Fetch data', 'Generate code')")
+    description: Optional[str] = Field(
+        default=None, description="Optional detailed description"
+    )
+    status: Literal["pending", "in-progress", "completed", "failed"] = Field(
+        default="pending", description="Current task status"
+    )
+    order: int = Field(description="Display order within the task group")
+    started_at: Optional[str] = Field(
+        default=None, description="ISO timestamp when task started"
+    )
+    completed_at: Optional[str] = Field(
+        default=None, description="ISO timestamp when task completed"
+    )
+    created_at: str = Field(description="ISO timestamp when task was created")
+    updated_at: str = Field(description="ISO timestamp when task was last updated")
+
+
+class CreateTaskInput(BaseModel):
+    """Input model for creating tasks."""
+
+    chat_id: str = Field(description="ID of the chat this task belongs to")
+    dashboard_id: str = Field(description="Dashboard identifier for the task")
+    task_group_id: str = Field(
+        description="Group ID linking multiple tasks from same AI response"
+    )
+    title: str = Field(description="Task title")
+    description: Optional[str] = Field(default=None, description="Task description")
+    status: Literal["pending", "in-progress", "completed", "failed"] = Field(
+        default="pending", description="Initial task status"
+    )
+    order: int = Field(description="Display order within the task group")
+
+
+class UpdateTaskInput(BaseModel):
+    """Input model for updating tasks."""
+
+    task_id: str = Field(description="Task identifier")
+    status: Optional[Literal["pending", "in-progress", "completed", "failed"]] = Field(
+        default=None, description="Task status"
+    )
+    started_at: Optional[str] = Field(
+        default=None, description="ISO timestamp when task started"
+    )
+    completed_at: Optional[str] = Field(
+        default=None, description="ISO timestamp when task completed"
+    )
 
 
 class Widget(BaseModel):
@@ -424,6 +483,7 @@ class DelegatedTask(BaseModel):
     target_agent: Literal["widget_agent_team"] = Field(
         description="Which agent team should handle this task"
     )
+    task_title: str = Field(description="Title of the task")
     task_instructions: str = Field(description="Detailed instructions for the task")
     task_status: Literal["pending", "in_progress", "completed", "failed"] = Field(
         default="pending"
@@ -452,6 +512,10 @@ class DelegatedTask(BaseModel):
     user_prompt: str = Field(description="Original user request")
     dashboard_id: str = Field(description="Dashboard ID where widget will be created")
     chat_id: str = Field(description="Chat ID for context")
+    
+    # Task database integration
+    db_task_id: Optional[str] = Field(default=None, description="Associated database task ID")
+    task_group_id: Optional[str] = Field(default=None, description="Task group ID for database")
     
     # Task results
     result: Optional[str] = Field(default=None, description="Task result summary message")

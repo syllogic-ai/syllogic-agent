@@ -81,6 +81,9 @@ class TaskCreationRequest(BaseModel):
     task_instructions: str = Field(
         description="Detailed instructions for the widget_agent_team"
     )
+    task_title: str = Field(
+        description="A task title explaining what the task is in no longer than 6 words (e.g. Creating Q3 sales bar chart, Writing explanation for Q3 bar chart, Updating top products table). Make sure that in the task_title you use -ing in verbs."
+    )
 
 
 class TaskCreationPlan(BaseModel):

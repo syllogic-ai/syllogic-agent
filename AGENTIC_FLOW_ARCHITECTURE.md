@@ -202,19 +202,16 @@ next_node ∈ ["data", "validate_data", "db_operations_node", "text_block_node",
   - Creates `FileSchema` and `FileSampleData` objects
   - Uses dashboard functions from `actions.dashboard`
 
-- **`generate_python_code_tool`**: 
-  - Generates Python code for data processing
-  - Uses Langfuse prompts with dynamic variables
-  - Follows `ChartConfigSchema` structure
-
-- **`e2b_sandbox_tool`**: 
-  - Executes generated code in sandboxed environment
-  - Validates output against schema
-  - Returns structured chart configuration
+- **`generate_and_execute_python_code_tool`**: 
+  - Merged tool that generates AND executes Python code
+  - Creates E2B sandbox, generates code using Langfuse prompts
+  - Executes code in sandboxed environment with data context
+  - Validates output against `ChartConfigSchema`
+  - Kills sandbox automatically on completion/error
 
 **Processing Flow**:
 ```
-fetch_data → generate_code → execute_code → validate_schema
+fetch_data → generate_and_execute_code (E2B sandbox + validation)
 ```
 
 #### 3. Validation Node
@@ -299,7 +296,7 @@ operation ∈ ["CREATE", "UPDATE", "DELETE"]
 
 4. **Data Node Processing**:
    ```
-   fetch_data_tool → generate_python_code_tool → e2b_sandbox_tool
+   fetch_data_tool → generate_and_execute_python_code_tool
    ```
 
 5. **State Transitions**:

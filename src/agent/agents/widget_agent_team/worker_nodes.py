@@ -8,8 +8,7 @@ from .validation_agent import ValidationAgent
 from .database_agent import DatabaseAgent
 from .text_block_agent import TextBlockAgent
 from .tools.fetch_data import fetch_data_tool
-from .tools.code_generation import generate_python_code_tool
-from .tools.code_execution import e2b_sandbox_tool
+from .tools.code_generation_and_execution import generate_and_execute_python_code_tool
 
 
 
@@ -84,8 +83,7 @@ def text_block_node(state: WidgetAgentState) -> Command:
 # Export tools and nodes
 __all__ = [
     "fetch_data_tool",
-    "e2b_sandbox_tool", 
-    "generate_python_code_tool",
+    "generate_and_execute_python_code_tool",
     "data_node",
     "validate_data_node",
     "db_operations_node",

@@ -306,7 +306,7 @@ def import_actions_dashboard():
 
 def import_config():
     """Import config module with required functions."""
-    required_functions = ['get_supabase_client', 'create_e2b_sandbox']
+    required_functions = ['get_supabase_client', 'get_e2b_api_key']
     
     return robust_import('config', required_functions)
 

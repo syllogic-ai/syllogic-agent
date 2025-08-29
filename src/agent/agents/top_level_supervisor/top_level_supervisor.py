@@ -22,7 +22,10 @@ from .tools.data_reader import get_available_data
 from .tools.task_manager import update_task_status, get_pending_tasks
 from .structured_output import SupervisorResponse, TaskCreationPlan, SupervisorDecision, TaskCreationRequest
 from actions.prompts import compile_prompt, get_prompt_config
-from config import get_langfuse_callback_handler, LANGFUSE_AVAILABLE
+from actions.tasks import create_tasks_from_delegated_tasks, generate_task_group_id, format_task_list_message, update_task_status as update_db_task_status
+from actions.messages import create_task_list_message
+from agent.models import UpdateTaskInput
+from config import get_langfuse_callback_handler, LANGFUSE_AVAILABLE, get_supabase_client
 
 # Handle imports for different execution contexts
 try:
@@ -208,6 +211,9 @@ def plan_widget_tasks(
         else:
             task_plan = planning_llm_structured.invoke(planning_prompt)
         
+        # Use request_id directly as task_group_id (no generation needed)
+        task_group_id = state.request_id
+        
         # Create DelegatedTask objects from the AI plan
         created_task_names = []
         updated_tasks = state.delegated_tasks.copy()  # Start with existing tasks
@@ -217,6 +223,7 @@ def plan_widget_tasks(
             new_task = DelegatedTask(
                 target_agent="widget_agent_team",
                 task_instructions=task_request.task_instructions,
+                task_title=task_request.title,  # Set task_title for database mapping
                 widget_type=task_request.widget_type,
                 operation=task_request.operation,
                 file_ids=task_request.file_ids,
@@ -227,10 +234,50 @@ def plan_widget_tasks(
                 chat_id=state.chat_id,
                 widget_id=task_request.widget_id,
                 reference_widget_id=task_request.reference_widget_id,
-                task_status="pending"  # Always create as pending
+                task_status="pending",  # Always create as pending
+                task_group_id=task_group_id  # Set task group ID
             )
             updated_tasks.append(new_task)
             created_task_names.append(f"{task_request.title} ({task_request.widget_type})")
+        
+        # Create database tasks and task list message
+        try:
+            supabase = get_supabase_client()
+            
+            # Get only the new tasks that were just created
+            new_tasks_count = len(updated_tasks) - len(state.delegated_tasks)
+            new_tasks = updated_tasks[-new_tasks_count:] if new_tasks_count > 0 else []
+            
+            logger.info(f"Creating {len(new_tasks)} database tasks (total tasks: {len(updated_tasks)}, previous: {len(state.delegated_tasks)})")
+            
+            # Create database tasks from delegated tasks
+            db_tasks = create_tasks_from_delegated_tasks(
+                supabase, 
+                new_tasks,  # Only new tasks
+                state.chat_id, 
+                state.dashboard_id, 
+                task_group_id
+            )
+            
+            # Format task list message content
+            task_list_content = format_task_list_message(db_tasks, task_group_id)
+            
+            # Create task list message in chat
+            task_message = create_task_list_message(
+                supabase,
+                state.chat_id,
+                task_group_id,
+                task_list_content
+            )
+            
+            logger.info(f"Created {len(db_tasks)} database tasks and task list message {task_message.id}")
+            
+        except Exception as db_error:
+            import traceback
+            error_details = traceback.format_exc()
+            logger.error(f"Failed to create database tasks/message: {db_error}")
+            logger.error(f"Full traceback: {error_details}")
+            # Continue with execution even if database operations fail
         
         # Create comprehensive success message
         success_message = f"""✅ **AI PLANNING COMPLETE**
@@ -241,6 +288,8 @@ def plan_widget_tasks(
 {chr(10).join([f"• {name}" for name in created_task_names])}
 
 **Duplicate Check:** {task_plan.duplicate_check}
+
+**Task Group ID:** {task_group_id}
 
 **📋 NEXT STEP:** Use execute_widget_tasks to process these AI-planned tasks with the widget_agent_team."""
 
@@ -465,6 +514,21 @@ def execute_widget_tasks(
                     if actual_widget_id and task.task_status == "completed":
                         updated_completed_widget_ids[task.task_id] = actual_widget_id
                         logger.info(f"Captured completed widget ID: {actual_widget_id} for task {task.task_id}")
+                
+                # Update database task status if db_task_id exists
+                if task.db_task_id:
+                    try:
+                        supabase = get_supabase_client()
+                        task_update = UpdateTaskInput(
+                            task_id=task.db_task_id,
+                            status=task.task_status,
+                            started_at=task.started_at.isoformat() if task.started_at else None,
+                            completed_at=task.completed_at.isoformat() if task.completed_at else None
+                        )
+                        update_db_task_status(supabase, task_update)
+                        logger.info(f"Updated database task {task.db_task_id} status to {task.task_status}")
+                    except Exception as db_error:
+                        logger.warning(f"Failed to update database task status: {db_error}")
                     
             updated_tasks.append(task)
         

@@ -1,6 +1,5 @@
 """Actions module for dashboard and widget operations."""
 
-from .chats import *
 from .dashboard import *
 from .jobs import *
 from .utils import *

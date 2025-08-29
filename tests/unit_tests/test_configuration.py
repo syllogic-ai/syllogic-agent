@@ -10,8 +10,3 @@ def test_graph_import() -> None:
         pytest.skip(f"Could not import graph or langgraph dependencies: {e}")
 
 
-def test_placeholder() -> None:
-    """Placeholder test for graph configuration."""
-    # TODO: You can add actual unit tests
-    # for your graph and other logic here.
-    assert True  # Placeholder assertion

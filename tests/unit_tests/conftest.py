@@ -43,20 +43,44 @@ def sample_chat_data():
         "user_id": "user-456",
         "dashboard_id": "dashboard-789",
         "title": "Test Chat",
-        "conversation": [
-            {
-                "role": "user",
-                "message": "Hello",
-                "timestamp": "2023-01-01T10:00:00.000Z",
-            },
-            {
-                "role": "system",
-                "message": "Hi there!",
-                "timestamp": "2023-01-01T10:00:01.000Z",
-            },
-        ],
+        "last_message_at": "2023-01-01T10:00:00.000Z",
+        "message_count": 0,
         "created_at": "2023-01-01T09:00:00.000Z",
         "updated_at": "2023-01-01T10:00:00.000Z",
+    }
+
+
+@pytest.fixture
+def sample_message_data():
+    """Sample message data for testing."""
+    return {
+        "id": "message-123",
+        "chat_id": "chat-123",
+        "role": "user",
+        "content": "New message",
+        "message_type": "chat",
+        "task_group_id": None,
+        "created_at": "2023-01-01T10:00:00.000Z",
+        "updated_at": "2023-01-01T10:00:00.000Z",
+    }
+
+
+@pytest.fixture
+def sample_task_data():
+    """Sample task data for testing."""
+    return {
+        "id": "task-123",
+        "chat_id": "chat-123",
+        "dashboard_id": "dashboard-789",
+        "task_group_id": "group-123",
+        "title": "Test Task",
+        "description": "Test task description",
+        "status": "pending",
+        "order": 1,
+        "started_at": None,
+        "completed_at": None,
+        "created_at": "2023-01-01T09:00:00.000Z",
+        "updated_at": "2023-01-01T09:00:00.000Z",
     }
 
 

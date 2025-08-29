@@ -96,7 +96,7 @@ class TestImportActionsAndConfig:
         assert result == mock_module
         mock_robust_import.assert_called_once_with(
             'config',
-            ['get_supabase_client', 'create_e2b_sandbox']
+            ['get_supabase_client', 'get_e2b_api_key']
         )
 
     @patch('actions.utils.robust_import')

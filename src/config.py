@@ -9,7 +9,6 @@ import os
 from typing import Optional
 
 from dotenv import load_dotenv
-from e2b_code_interpreter import Sandbox
 from supabase import Client, create_client
 
 # Import langfuse conditionally to avoid breaking the system when not available
@@ -119,29 +118,6 @@ def get_e2b_api_key() -> str:
         logger.error(f"Failed to load E2B API key: {str(e)}")
         raise
 
-
-def create_e2b_sandbox() -> Sandbox:
-    """Create a new E2B Sandbox instance.
-
-    Returns:
-        Sandbox: New E2B Sandbox instance
-
-    Raises:
-        ValueError: If E2B API key is not available
-        Exception: If sandbox creation fails
-    """
-    try:
-        api_key = get_e2b_api_key()
-
-        # Create Sandbox with API key
-        sandbox = Sandbox(api_key=api_key)
-
-        logger.info("E2B Sandbox created successfully")
-        return sandbox
-
-    except Exception as e:
-        logger.error(f"Failed to create E2B Sandbox: {str(e)}")
-        raise
 
 
 def reset_e2b_config():
@@ -375,7 +351,6 @@ __all__ = [
     "get_supabase_client",
     "reset_supabase_client",
     "get_e2b_api_key",
-    "create_e2b_sandbox",
     "reset_e2b_config",
     "get_langfuse_client",
     "reset_langfuse_client",
