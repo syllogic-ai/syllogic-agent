@@ -3,10 +3,22 @@
 This module defines Pydantic models to ensure structured output from the supervisor agent.
 """
 
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 
 from agent.models import DelegatedTask
+
+
+class ReferenceWidgetData(BaseModel):
+    """Reference widget data from completed tasks."""
+    
+    operation_type: str = Field(description="Database operation type (CREATE, UPDATE, DELETE)")
+    task_id: str = Field(description="ID of the task that created this widget")
+    widget_data: Dict[str, Any] = Field(description="Complete widget data including config and metadata")
+    validation_confidence: Optional[int] = Field(default=None, description="Validation confidence score")
+    
+    class Config:
+        extra = "allow"  # Allow additional properties to avoid OpenAI schema validation issues
 
 
 class SupervisorAnalysis(BaseModel):
@@ -74,9 +86,6 @@ class TaskCreationRequest(BaseModel):
     )
     widget_id: Optional[str] = Field(
         default=None, description="Widget ID for UPDATE/DELETE operations"
-    )
-    reference_widget_id: Optional[str] = Field(
-        default=None, description="Widget ID to reference for text blocks (e.g., chart widget being explained)"
     )
     task_instructions: str = Field(
         description="Detailed instructions for the widget_agent_team"

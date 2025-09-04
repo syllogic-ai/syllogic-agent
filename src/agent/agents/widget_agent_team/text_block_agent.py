@@ -74,20 +74,20 @@ class TextBlockAgent:
                 
             llm = ChatOpenAI(**llm_params)
             
-            # Create tools for the agent
-            tools = [self._create_fetch_widget_tool(), self._create_generate_content_tool()]
+            # Create tools for the agent (removed fetch_widget_tool - now using reference_widget_data)
+            tools = [self._create_generate_content_tool()]
             
             # Use fallback prompt - agent prompt should be simple for ReactAgent
-            agent_prompt = """You are a text block content generator. Use the available tools to fetch widget details and generate appropriate HTML content.
+            agent_prompt = """You are a text block content generator. Use the available tools to generate appropriate HTML content.
                 
 Your responsibilities:
-1. Use the fetch_widget_details tool to get details about widgets when needed
-2. Use the generate_text_content tool to create appropriate HTML content for text blocks
+1. Use the generate_text_content tool to create appropriate HTML content for text blocks
+2. Use any provided reference widget data to create explanatory content
 3. Consider the context and purpose of the text block when generating content
 4. Ensure the content is well-formatted and informative
 
 When calling generate_text_content tool, provide a content_request dictionary with these keys:
-- widget_details: The JSON string result from fetch_widget_details
+- widget_details: Any reference widget data provided in the input (or empty string if none)
 - user_prompt: The user's original request
 - task_instructions: The specific task instructions"""
 
@@ -105,45 +105,7 @@ When calling generate_text_content tool, provide a content_request dictionary wi
             logger.error(error_msg)
             raise RuntimeError(error_msg) from e
 
-    def _create_fetch_widget_tool(self):
-        """Create tool for fetching widget details."""
-        @tool
-        def fetch_widget_details(widget_id: str) -> str:
-            """Fetch widget details including config and metadata.
-            
-            Args:
-                widget_id: The widget identifier
-                
-            Returns:
-                Widget details as formatted string
-            """
-            try:
-                from actions.widgets import get_widget_by_id, get_widget_summary_by_id
-                
-                # Get full widget details
-                widget = get_widget_by_id(widget_id)
-                if not widget:
-                    return f"ERROR: Widget {widget_id} not found"
-                
-                # Get a readable summary
-                summary = get_widget_summary_by_id(widget_id)
-                
-                # Return both structured data and summary
-                result = {
-                    "widget_summary": summary,
-                    "widget_details": widget,
-                    "widget_id": widget_id,
-                    "title": widget.get('title', 'Untitled'),
-                    "type": widget.get('type', 'unknown'),
-                    "config": widget.get('config', {}),
-                    "description": f"Widget '{widget.get('title', 'Untitled')}' of type {widget.get('type', 'unknown')}"
-                }
-                
-                return json.dumps(result, indent=2, default=str)
-            except Exception as e:
-                return f"ERROR: Failed to fetch widget details: {str(e)}"
-        
-        return fetch_widget_details
+    # _create_fetch_widget_tool removed - now using reference_widget_data passed directly in state
 
     def _create_generate_content_tool(self):
         """Create tool for generating text block content."""
@@ -281,30 +243,24 @@ When calling generate_text_content tool, provide a content_request dictionary wi
             if not self.agent_executor:
                 raise RuntimeError("Agent not properly initialized")
             
-            # Check if we have a reference widget ID to fetch details from
+            # Check if we have reference widget data from other completed tasks
             reference_context = ""
-            if state.reference_widget_id:
+            reference_data_json = ""
+            if state.reference_widget_data and len(state.reference_widget_data) > 0:
+                reference_context = f"""
+
+CRITICAL: This text block must analyze {len(state.reference_widget_data)} existing widget(s) that were created in previous tasks.
+The widget data has been provided directly - NO NEED to fetch from database.
+DO NOT use the current widget ID {state.widget_id} - that's the text block being created.
+USE the reference widget data provided below to analyze and explain the widget(s)."""
+                
+                # Convert reference widget data to JSON for the prompt
+                import json
                 try:
-                    from actions.widgets import get_widget_summary_by_id
-                    summary = get_widget_summary_by_id(state.reference_widget_id)
-                    if summary:
-                        reference_context = f"""
-
-CRITICAL: This text block must analyze the existing chart widget with ID: {state.reference_widget_id}
-Summary: {summary}
-
-MANDATORY FIRST STEP: Call fetch_widget_details("{state.reference_widget_id}") to get the chart data and configuration.
-DO NOT use the current widget ID {state.widget_id} - that's the text block being created.
-USE the reference widget ID {state.reference_widget_id} - that's the chart to analyze."""
+                    reference_data_json = json.dumps(state.reference_widget_data, indent=2, default=str)
                 except Exception as e:
-                    logger.warning(f"Failed to get reference widget summary: {e}")
-                    reference_context = f"""
-
-CRITICAL: This text block must analyze the existing widget with ID: {state.reference_widget_id}
-
-MANDATORY FIRST STEP: Call fetch_widget_details("{state.reference_widget_id}") to get the widget data.
-DO NOT use the current widget ID {state.widget_id} - that's the text block being created.
-USE the reference widget ID {state.reference_widget_id} - that's the widget to analyze."""
+                    logger.warning(f"Failed to serialize reference widget data: {e}")
+                    reference_data_json = str(state.reference_widget_data)
             
             # Prepare input for the agent
             agent_input = {
@@ -319,7 +275,7 @@ Widget ID: {state.widget_id}
 {reference_context}
 
 Use the available tools to:
-{("1. Generate appropriate HTML content for the text block" if not state.reference_widget_id else f"1. FIRST: Call fetch_widget_details('{state.reference_widget_id}') to get the referenced widget data\n2. Generate HTML content explaining the referenced widget based on the fetched data")}
+{("1. Generate appropriate HTML content for the text block" if not state.reference_widget_data else f"1. Generate HTML content explaining the referenced widget(s) based on the provided data below\n\nREFERENCE WIDGET DATA:\n{reference_data_json}")}
 
 Requirements:
 - Use h2 tags for headings (not h1)

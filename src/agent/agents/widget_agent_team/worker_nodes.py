@@ -33,11 +33,8 @@ class WorkerNodes:
         return self.validation_agent.validate_data(state)
 
     def db_operations_node(self, state: WidgetAgentState) -> Command:
-        """
-        Database operations node that handles CREATE/UPDATE/DELETE operations for widgets.
-        Uses create_widget, update_widget, delete_widget from dashboard.py.
-        """
-        return self.database_agent.perform_db_operations(state)
+        """Execute database operations and return confirmed widget_id."""
+        return self.database_agent.execute_database_operations(state)
 
     def text_block_node(self, state: WidgetAgentState) -> Command:
         """

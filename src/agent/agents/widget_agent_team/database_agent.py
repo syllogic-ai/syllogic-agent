@@ -1,49 +1,45 @@
-"""Database operations agent for widget CRUD operations."""
+"""Database agent for widget operations."""
 
-import os
-import sys
+import logging
 import uuid
+from typing import Dict, Any
 from datetime import datetime
 
 from langchain_core.messages import ToolMessage
 from langgraph.types import Command
 
-from agent.models import CreateWidgetInput, UpdateWidgetInput, WidgetAgentState
-
-from actions.utils import import_actions_dashboard
+from agent.models import WidgetAgentState, CreateWidgetInput, UpdateWidgetInput
 from .tools.widget_summary import generate_widget_summary
+
+# Initialize logger
+logger = logging.getLogger(__name__)
+
+# Handle imports for different execution contexts
+try:
+    from actions.dashboard import create_widget, update_widget, delete_widget
+except ImportError:
+    import sys
+    import os
+    # Add the src directory to the path
+    src_path = os.path.join(os.path.dirname(__file__), '..', '..', '..')
+    if src_path not in sys.path:
+        sys.path.insert(0, src_path)
+    from actions.dashboard import create_widget, update_widget, delete_widget
 
 
 class DatabaseAgent:
-    """Database operations agent that handles CREATE/UPDATE/DELETE operations for widgets."""
+    """Agent for handling database operations for widgets."""
 
     def __init__(self):
         """Initialize database agent."""
         pass
 
-    def perform_db_operations(self, state: WidgetAgentState) -> Command:
+    def execute_database_operations(self, state: WidgetAgentState) -> Command:
         """
-        Database operations that handles CREATE/UPDATE/DELETE operations for widgets.
-        Uses create_widget, update_widget, delete_widget from dashboard.py.
+        Execute database operations directly and return confirmed widget_id.
+        Returns only the widget_id to the top-level supervisor.
         """
         try:
-            # Import dashboard functions using robust import
-            try:
-                dashboard_module = import_actions_dashboard()
-                create_widget = dashboard_module.create_widget
-                update_widget = dashboard_module.update_widget
-                delete_widget = dashboard_module.delete_widget
-            except ImportError as e:
-                error_msg = f"Failed to import actions.dashboard module: {str(e)}"
-                return Command(
-                    goto="widget_supervisor",
-                    update={
-                        "error_messages": state.error_messages + [error_msg],
-                        "task_status": "failed",
-                        "updated_at": datetime.now(),
-                    },
-                )
-
             # Extract operation type
             operation = state.operation
             
@@ -80,29 +76,37 @@ class DatabaseAgent:
                     widget_summary = f"Widget of type {widget_type} titled '{title}'"
                     print(f"Warning: Summary generation failed: {e}")
                 
-                # Create widget input using unified widget_config
+                # Create widget input object with is_configured=False
                 create_input = CreateWidgetInput(
                     dashboard_id=dashboard_id,
                     title=title,
                     widget_type=widget_type,
                     config=state.widget_config or {},  # Use unified widget_config
                     widget_id=widget_id,  # Pass the widget_id to be used
-                    chat_id=state.chat_id,
                     description=state.description,
                     summary=widget_summary,  # Add the generated summary
                     data={"data": state.widget_config.get("data", []) if state.widget_config else []},  # Extract data from widget_config
+                    is_configured=False,  # Explicitly set to False
                 )
                 
-                # Create widget in database
+                # Execute database creation immediately
                 created_widget = create_widget(create_input)
                 
-                success_msg = f"✅ DATABASE OPERATION COMPLETE: Successfully created widget '{title}' with ID: {created_widget.id}. The entire widget creation task is now COMPLETED. All data has been processed, validated, and persisted to the database."
+                # Verify the widget was created successfully
+                confirmed_widget_id = created_widget.id
+                if confirmed_widget_id != widget_id:
+                    logger.warning(f"Widget created with different ID: expected {widget_id}, got {confirmed_widget_id}")
+                
+                logger.info(f"Successfully created widget {confirmed_widget_id} in database")
+                
+                success_msg = f"✅ WIDGET CREATED: Successfully created widget '{title}' with confirmed ID: {confirmed_widget_id}"
                 return Command(
-                    goto="widget_supervisor",
+                    goto="END",
                     update={
-                        "widget_id": created_widget.id,
+                        "widget_id": confirmed_widget_id,  # Return only the confirmed widget_id
                         "updated_at": datetime.now(),
-                        "widget_creation_completed": True,  # Clear completion signal
+                        "task_status": "completed",
+                        "widget_creation_completed": True,
                         "messages": [
                             ToolMessage(
                                 content=success_msg,
@@ -127,7 +131,7 @@ class DatabaseAgent:
                     widget_summary = f"Updated widget of type {widget_type} titled '{title}'"
                     print(f"Warning: Summary generation failed for update: {e}")
                 
-                # Update existing widget using unified widget_config
+                # Update existing widget using unified widget_config with is_configured=False
                 update_input = UpdateWidgetInput(
                     widget_id=state.widget_id,
                     title=title,
@@ -136,17 +140,22 @@ class DatabaseAgent:
                     description=state.description,
                     summary=widget_summary,  # Add the updated summary
                     data={"data": state.widget_config.get("data", []) if state.widget_config else []},  # Extract data from widget_config
+                    is_configured=False,  # Explicitly set to False
                 )
                 
-                # Update widget in database
+                # Execute database update immediately
                 updated_widget = update_widget(update_input)
                 
-                success_msg = f"✅ DATABASE OPERATION COMPLETE: Successfully updated widget '{title}' with ID: {state.widget_id}. The entire widget update task is now COMPLETED. All data has been processed, validated, and persisted to the database."
+                logger.info(f"Successfully updated widget {updated_widget.id} in database")
+                
+                success_msg = f"✅ WIDGET UPDATED: Successfully updated widget '{title}' with ID: {updated_widget.id}"
                 return Command(
-                    goto="widget_supervisor",
+                    goto="END",
                     update={
+                        "widget_id": updated_widget.id,  # Return only the confirmed widget_id
                         "updated_at": datetime.now(),
-                        "widget_update_completed": True,  # Clear completion signal
+                        "task_status": "completed",
+                        "widget_update_completed": True,
                         "messages": [
                             ToolMessage(
                                 content=success_msg,
@@ -157,16 +166,19 @@ class DatabaseAgent:
                 )
                 
             elif operation == "DELETE":
-                # Delete widget from database
+                # Execute database deletion immediately
                 deletion_success = delete_widget(state.widget_id)
                 
                 if deletion_success:
-                    success_msg = f"✅ DATABASE OPERATION COMPLETE: Successfully deleted widget with ID: {state.widget_id}. The entire widget deletion task is now COMPLETED."
+                    logger.info(f"Successfully deleted widget {state.widget_id} from database")
+                    success_msg = f"✅ WIDGET DELETED: Successfully deleted widget '{title}' with ID: {state.widget_id}"
                     return Command(
-                        goto="widget_supervisor",
+                        goto="END",
                         update={
+                            "widget_id": state.widget_id,  # Return the widget_id that was deleted
                             "updated_at": datetime.now(),
-                            "widget_deletion_completed": True,  # Clear completion signal
+                            "task_status": "completed",
+                            "widget_deletion_completed": True,
                             "messages": [
                                 ToolMessage(
                                     content=success_msg,
@@ -176,7 +188,8 @@ class DatabaseAgent:
                         },
                     )
                 else:
-                    error_msg = f"Failed to delete widget with ID: {state.widget_id} (widget not found)"
+                    error_msg = f"Widget {state.widget_id} was not found for deletion"
+                    logger.warning(error_msg)
                     return Command(
                         goto="widget_supervisor",
                         update={
@@ -198,7 +211,8 @@ class DatabaseAgent:
                 )
 
         except Exception as e:
-            error_msg = f"Database operations error: {str(e)}"
+            error_msg = f"Database operation execution error: {str(e)}"
+            logger.error(error_msg)
             return Command(
                 goto="widget_supervisor",
                 update={

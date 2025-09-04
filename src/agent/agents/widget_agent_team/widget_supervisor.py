@@ -122,6 +122,7 @@ class WidgetSupervisor:
                 "db_create_completed": state.widget_creation_completed,
                 "db_update_completed": state.widget_update_completed, 
                 "db_delete_completed": state.widget_deletion_completed,
+                "has_confirmed_widget_id": state.widget_id is not None,
             },
             "handoff_messages": handoff_messages,
             "previous_node_info": self._get_previous_node_info(handoff_messages),
@@ -135,8 +136,8 @@ class WidgetSupervisor:
                 "file_count": len(state.file_ids),
                 "widget_configured": bool(state.title and state.description),
                 "dashboard_id": state.dashboard_id,
-                "reference_widget_id": state.reference_widget_id,
-                "has_reference_widget": state.reference_widget_id is not None,
+                "reference_widget_data": state.reference_widget_data,
+                "has_reference_widget": state.reference_widget_data is not None and len(state.reference_widget_data) > 0,
             },
         }
         
@@ -158,9 +159,9 @@ class WidgetSupervisor:
         if not tool_call_id or tool_call_id == 'unknown':
             return "unknown"
             
-        # Database operations node patterns
+        # Database operations are now executed within widget team
         if any(pattern in tool_call_id for pattern in ['db_create_complete', 'db_update_complete', 'db_delete_complete']):
-            return "db_operations_node"
+            return "db_operations"
             
         # Validation node patterns
         if any(pattern in tool_call_id for pattern in ['validation_complete', 'validation_failed']):
@@ -181,8 +182,8 @@ class WidgetSupervisor:
             return "data"
         elif 'validate' in tool_call_id or 'validation' in tool_call_id:
             return "validate_data"
-        elif 'db' in tool_call_id or 'database' in tool_call_id or 'create' in tool_call_id or 'update' in tool_call_id or 'delete' in tool_call_id:
-            return "db_operations_node"
+        elif 'db' in tool_call_id or 'database' in tool_call_id:
+            return "db_operations"  # Database operations executed within widget team
             
         return "unknown"
 
@@ -260,15 +261,12 @@ class WidgetSupervisor:
     ) -> SupervisorDecision:
         """Apply minimal safety constraints to LLM decisions."""
         
-        # Critical: Force end if any database operation is completed
-        if (state.widget_creation_completed or 
-            state.widget_update_completed or 
-            state.widget_deletion_completed):
+        # Critical: Force end if task is completed (validation passed with database operation prepared)
+        if state.task_status == "completed":
             decision.next_node = "end"
             decision.reasoning = (
-                f"Business rule override: Database operation completed "
-                f"(create={state.widget_creation_completed}, update={state.widget_update_completed}, "
-                f"delete={state.widget_deletion_completed}). Workflow must end."
+                f"Business rule override: Task completed with database operation prepared. "
+                f"Validation passed and database operation ready for top-level supervisor execution."
             )
             return decision
         
@@ -288,16 +286,13 @@ class WidgetSupervisor:
         """
         try:
             # Check for immediate completion before expensive LLM calls
-            if (state.widget_creation_completed or 
-                state.widget_update_completed or 
-                state.widget_deletion_completed):
-                # Database operation completed - create end decision directly
+            if state.task_status == "completed":
+                # Task completed with database operation prepared - create end decision directly
                 decision = SupervisorDecision(
                     next_node="end",
                     reasoning=(
-                        f"Database operation completed successfully "
-                        f"(create={state.widget_creation_completed}, update={state.widget_update_completed}, "
-                        f"delete={state.widget_deletion_completed}). Task is finished."
+                        f"Task completed successfully. Validation passed with high confidence "
+                        f"and database operation prepared for top-level supervisor execution."
                     )
                 )
             else:
@@ -340,9 +335,7 @@ class WidgetSupervisor:
             # Handle end condition
             if decision.next_node == "end":
                 # Determine final status based on what was accomplished
-                if (state.widget_creation_completed or 
-                    state.widget_update_completed or 
-                    state.widget_deletion_completed):
+                if state.task_status == "completed":
                     final_status = "completed"
                 elif state.data_validated:
                     final_status = "completed"
@@ -351,13 +344,20 @@ class WidgetSupervisor:
                 else:
                     final_status = "failed"  # Default fallback
                 
+                # Prepare update dict with standard fields
+                update_dict = {
+                    "widget_supervisor_reasoning": decision.reasoning,
+                    "task_status": final_status,
+                    "updated_at": datetime.now(),
+                }
+                
+                # For successful completion, ensure confirmed widget_id is available
+                if final_status == "completed" and state.widget_id:
+                    update_dict["widget_id"] = state.widget_id  # Return only the confirmed widget_id
+                
                 return Command(
                     goto=END,
-                    update={
-                        "widget_supervisor_reasoning": decision.reasoning,
-                        "task_status": final_status,
-                        "updated_at": datetime.now(),
-                    },
+                    update=update_dict,
                 )
 
             # Return routing command with state updates

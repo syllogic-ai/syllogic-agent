@@ -321,6 +321,54 @@ def get_langchain_config_with_tracing(
         return {}
 
 
+def create_langfuse_config(state: dict, trace_name: str = "syllogic-agent-execution") -> dict:
+    """Create Langfuse configuration for tracing based on state context.
+    
+    This helper function extracts context from graph state and creates proper
+    Langfuse tracing configuration for LangGraph execution.
+    
+    Args:
+        state: The current graph state containing user/session info
+        trace_name: Name for the trace
+        
+    Returns:
+        Dict containing callbacks configuration or empty dict if Langfuse unavailable
+    """
+    if not LANGFUSE_AVAILABLE:
+        return {}
+        
+    try:
+        # Extract context information from state
+        user_id = state.get("user_id")
+        chat_id = state.get("chat_id") 
+        dashboard_id = state.get("dashboard_id")
+        request_id = state.get("request_id")
+        
+        # Create trace metadata
+        metadata = {
+            "dashboard_id": dashboard_id,
+            "request_id": request_id,
+        }
+        
+        # Use the existing helper function
+        config = get_langchain_config_with_tracing(
+            trace_name=trace_name,
+            session_id=chat_id,  # Use chat_id as session for conversation grouping
+            user_id=user_id,
+            tags=["syllogic", "agent", "langgraph", "multi-agent"],
+            metadata=metadata
+        )
+        
+        if config:
+            logger.info(f"Created Langfuse tracing for user={user_id}, chat={chat_id}, dashboard={dashboard_id}")
+            
+        return config
+            
+    except Exception as e:
+        logger.error(f"Error creating Langfuse config: {e}")
+        return {}
+
+
 # Initialize client on module import
 try:
     get_supabase_client()
@@ -357,5 +405,6 @@ __all__ = [
     "get_prompt",
     "get_langfuse_callback_handler",
     "get_langchain_config_with_tracing",
+    "create_langfuse_config",
     "LANGFUSE_AVAILABLE",
 ]

@@ -1,6 +1,7 @@
 """Data validation agent for widget processing."""
 
 import json
+import logging
 from datetime import datetime
 from typing import List, Optional
 
@@ -10,6 +11,9 @@ from langgraph.types import Command
 from pydantic import BaseModel, Field
 
 from agent.models import WidgetAgentState
+
+# Initialize logger
+logger = logging.getLogger(__name__)
 
 # Handle imports for different execution contexts
 try:
@@ -49,9 +53,6 @@ class ValidationAgent:
         """Initialize validation agent with LLM configuration from Langfuse."""
         # Fetch model configuration from Langfuse (REQUIRED)
         try:
-            import logging
-            logger = logging.getLogger(__name__)
-            
             logger.info("Fetching model configuration from Langfuse for validate_data...")
             prompt_config = get_prompt_config("widget_agent_team/validate_data", label="latest")
             
@@ -75,8 +76,7 @@ class ValidationAgent:
             
         except Exception as e:
             error_msg = f"Failed to initialize ValidationAgent - cannot fetch model config from Langfuse: {str(e)}"
-            import logging
-            logging.getLogger(__name__).error(error_msg)
+            logger.error(error_msg)
             raise RuntimeError(error_msg) from e
 
     def validate_data(self, state: WidgetAgentState) -> Command:
@@ -122,9 +122,6 @@ class ValidationAgent:
 
             # Fetch and compile validation prompt from Langfuse with dynamic variables
             try:
-                import logging
-                logger = logging.getLogger(__name__)
-                
                 # Extract sampling information for variables
                 sampling_info = sample_data.get("_sampling_info", {})
                 
@@ -169,8 +166,7 @@ class ValidationAgent:
                 
             except Exception as e:
                 error_msg = f"Failed to fetch/compile validation prompt from Langfuse: {str(e)}"
-                import logging
-                logging.getLogger(__name__).error(error_msg)
+                logger.error(error_msg)
                 return Command(
                     goto="widget_supervisor",
                     update={
@@ -203,17 +199,19 @@ class ValidationAgent:
                 validation_result.is_valid and validation_result.confidence_level >= 80
             )
 
+            logger.info(f"🔍 VALIDATION RESULT: is_valid={validation_result.is_valid}, confidence={validation_result.confidence_level}%, data_is_valid={data_is_valid}")
+
             if data_is_valid:
-                # Continue to DB operations after validation passes
+                # Validation passed with high confidence - execute database operations immediately
                 return Command(
-                    goto="widget_supervisor",
+                    goto="db_operations",  # Route to database operations node
                     update={
                         "data_validated": True,
                         "data": state.widget_config,  # Use unified widget_config
                         "updated_at": datetime.now(),
                         "messages": [
                             ToolMessage(
-                                content=f"✅ Data validation successful! {validation_message}",
+                                content=f"✅ Data validation successful! {validation_message}. Proceeding to database operations.",
                                 tool_call_id="validation_complete",
                             )
                         ],
@@ -407,3 +405,4 @@ class ValidationAgent:
             analysis["sampling_info"] = widget_config["_sampling_info"]
 
         return analysis
+

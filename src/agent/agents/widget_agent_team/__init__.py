@@ -26,7 +26,7 @@ from .widget_supervisor import WidgetSupervisor, widget_supervisor
 from .worker_nodes import (
     data_node,
     validate_data_node,
-    db_operations_node,
+    # db_operations_node removed - database operations now handled by validation_agent
 )
 
 __all__ = [
@@ -40,5 +40,5 @@ __all__ = [
     # Worker nodes
     "data_node",
     "validate_data_node",
-    "db_operations_node",
+    # "db_operations_node" removed - database operations now handled by validation_agent
 ]

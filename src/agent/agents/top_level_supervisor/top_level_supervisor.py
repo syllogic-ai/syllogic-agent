@@ -20,6 +20,7 @@ from typing_extensions import Annotated
 from agent.models import TopLevelSupervisorState, WidgetAgentState, DelegatedTask
 from .tools.data_reader import get_available_data
 from .tools.task_manager import update_task_status, get_pending_tasks
+from .tools.database_operations import finalize_created_widgets
 from .structured_output import SupervisorResponse, TaskCreationPlan, SupervisorDecision, TaskCreationRequest
 from actions.prompts import compile_prompt, get_prompt_config
 from actions.tasks import create_tasks_from_delegated_tasks, generate_task_group_id, format_task_list_message, update_task_status as update_db_task_status
@@ -219,6 +220,21 @@ def plan_widget_tasks(
         updated_tasks = state.delegated_tasks.copy()  # Start with existing tasks
         
         for task_request in task_plan.tasks:
+            # Supervisor logic: Detect if this is a text block that should reference other widgets
+            reference_widget_data = None
+            if (task_request.widget_type == "text" and 
+                any(keyword in task_request.task_instructions.lower() for keyword in 
+                    ["reference", "explain", "analyze", "describe the chart", "describe the bar chart", "seasonal", "trend"])):
+                # Auto-detect reference widget data from completed chart tasks
+                reference_widget_data = []
+                for completed_task in state.delegated_tasks:
+                    if (completed_task.task_status == "completed" and
+                        completed_task.widget_type in ["bar", "line", "pie", "area", "radial"] and
+                        hasattr(completed_task, 'result') and 
+                        isinstance(completed_task.result, dict)):
+                        reference_widget_data.append(completed_task.result)
+                        logger.info(f"Auto-detected reference widget data for text block from completed {completed_task.widget_type} chart task {completed_task.task_id}")
+            
             # Create each task directly using DelegatedTask model
             new_task = DelegatedTask(
                 target_agent="widget_agent_team",
@@ -233,7 +249,7 @@ def plan_widget_tasks(
                 dashboard_id=state.dashboard_id,
                 chat_id=state.chat_id,
                 widget_id=task_request.widget_id,
-                reference_widget_id=task_request.reference_widget_id,
+                reference_widget_data=reference_widget_data,
                 task_status="pending",  # Always create as pending
                 task_group_id=task_group_id  # Set task group ID
             )
@@ -348,6 +364,24 @@ def _generate_task_status_report(
     all_completed = len(completed_tasks) == len(state.delegated_tasks) and len(state.delegated_tasks) > 0
     if all_completed:
         status_report.append("\n✅ **All tasks are completed!**")
+        
+        # Check if database operations have already been executed
+        if not state.pending_database_operations and not getattr(state, 'database_operations_executed', False):
+            status_report.append("\n🚀 **Automatically triggering database operations...**")
+            status_message = "\n".join(status_report)
+            
+            # Return command to automatically collect and execute database operations
+            return Command(
+                update={
+                    "all_tasks_completed": all_completed,
+                    "auto_execute_database_ops": True,  # Flag to trigger automatic execution
+                    "messages": [ToolMessage(content=status_message, tool_call_id=tool_call_id)],
+                }
+            )
+        elif getattr(state, 'database_operations_executed', False):
+            status_report.append("\n🎯 **Database operations completed - widgets are live on dashboard!**")
+        else:
+            status_report.append("\n📋 **Database operations are pending execution...**")
     
     status_message = "\n".join(status_report)
     
@@ -391,47 +425,53 @@ def execute_widget_tasks(
         dependencies_resolved = 0
         has_text_blocks_needing_charts = any(
             task.widget_type == "text" and 
-            "bar chart" in task.task_instructions.lower() and
-            "reference_widget_id" in task.task_instructions.lower() and
-            not task.reference_widget_id
+            ("chart" in task.task_instructions.lower() or "widget" in task.task_instructions.lower()) and
+            ("reference" in task.task_instructions.lower() or "explain" in task.task_instructions.lower() or "analyze" in task.task_instructions.lower()) and
+            not task.reference_widget_data
             for task in pending_tasks
         )
         
         # If we have text blocks that need chart references but haven't been resolved
-        if has_text_blocks_needing_charts and state.completed_widget_ids:
+        if has_text_blocks_needing_charts:
             logger.info("Automatically resolving task dependencies before executing text block tasks")
             
             for task in state.delegated_tasks:
-                # Look for text block tasks that need chart widget references
+                # Look for text block tasks that need widget references (more flexible detection)
                 if (task.widget_type == "text" and 
                     task.task_status == "pending" and 
-                    "bar chart" in task.task_instructions.lower() and
-                    "reference_widget_id" in task.task_instructions.lower()):
+                    ("chart" in task.task_instructions.lower() or "widget" in task.task_instructions.lower()) and
+                    ("reference" in task.task_instructions.lower() or "explain" in task.task_instructions.lower() or "analyze" in task.task_instructions.lower()) and
+                    not task.reference_widget_data):
                     
                     # Find a completed chart task to reference
                     chart_task_id = None
-                    chart_widget_id = None
+                    chart_task_result = None
                     
-                    # Look for completed chart tasks
+                    # Look for completed chart/data tasks (expanded chart types)
                     for other_task in state.delegated_tasks:
-                        if (other_task.widget_type in ["bar", "line", "pie", "area", "radial"] and 
+                        if (other_task.widget_type in ["bar", "line", "pie", "area", "radial", "kpi", "table"] and 
                             other_task.task_status == "completed" and
-                            other_task.task_id in state.completed_widget_ids):
+                            hasattr(other_task, 'result') and 
+                            isinstance(other_task.result, dict)):
                             chart_task_id = other_task.task_id
-                            chart_widget_id = state.completed_widget_ids[other_task.task_id]
+                            chart_task_result = other_task.result
                             break
                     
-                    if chart_widget_id:
-                        # Update the text block task with the actual chart widget ID
-                        task.reference_widget_id = chart_widget_id
-                        updated_task_instructions = task.task_instructions.replace(
-                            "set this task's 'reference_widget_id' to that bar chart's widget_id",
-                            f"reference_widget_id is now set to {chart_widget_id}"
-                        )
-                        task.task_instructions = updated_task_instructions
+                    if chart_task_result:
+                        # Update the text block task with the actual widget data
+                        task.reference_widget_data = [chart_task_result]
+                        
+                        # Update task instructions to reflect that dependency is resolved
+                        if "reference_widget_id" in task.task_instructions:
+                            updated_task_instructions = task.task_instructions.replace(
+                                "reference_widget_id",
+                                f"reference_widget_data (from completed task {chart_task_id})"
+                            )
+                            task.task_instructions = updated_task_instructions
+                        
                         dependencies_resolved += 1
                         
-                        logger.info(f"Auto-resolved dependency: Text task {task.task_id} now references chart widget {chart_widget_id}")
+                        logger.info(f"Auto-resolved dependency: Text task {task.task_id} now has reference data from completed task {chart_task_id}")
             
             # Update pending_tasks list after dependency resolution
             pending_tasks = [
@@ -442,13 +482,9 @@ def execute_widget_tasks(
             if dependencies_resolved > 0:
                 logger.info(f"Successfully auto-resolved {dependencies_resolved} dependencies, proceeding with task execution")
             else:
-                logger.warning("No dependencies could be auto-resolved")
-                return Command(
-                    update={
-                        "current_reasoning": "Could not auto-resolve task dependencies",
-                        "messages": [ToolMessage(content="Could not automatically resolve task dependencies. No matching chart tasks found.", tool_call_id=tool_call_id)],
-                    }
-                )
+                logger.warning("No dependencies could be auto-resolved, but proceeding with text widget tasks anyway")
+                # Don't fail completely - proceed with text widgets even without references
+                # They can still generate standalone content
         
         # Process the first pending task (one at a time for now)
         current_task = pending_tasks[0]
@@ -469,7 +505,7 @@ def execute_widget_tasks(
             "chat_id": current_task.chat_id,
             "file_ids": current_task.file_ids,
             "widget_id": current_task.widget_id or str(uuid.uuid4()),  # Generate ID if None
-            "reference_widget_id": current_task.reference_widget_id,  # For text blocks referencing charts
+            "reference_widget_data": current_task.reference_widget_data,  # For text blocks referencing other widgets
             "title": current_task.title,
             "description": current_task.description,
             "task_status": "in_progress",
@@ -503,11 +539,26 @@ def execute_widget_tasks(
                 task.completed_at = datetime.now()
                 task.started_at = datetime.now()
                 
+                logger.info(f"🔍 WIDGET RESULT DEBUG for task {task.task_id}:")
+                logger.info(f"  - task_status: {widget_result.get('task_status')}")
+                logger.info(f"  - data_validated: {widget_result.get('data_validated')}")
+                logger.info(f"  - has_database_operation: {bool(widget_result.get('database_operation'))}")
+                logger.info(f"  - has_data: {bool(widget_result.get('data'))}")
+                logger.info(f"  - error_messages: {widget_result.get('error_messages', [])}")
+                
                 if widget_result.get("error_messages"):
                     task.error_message = "; ".join(widget_result["error_messages"])
                     task.task_status = "failed"
                 else:
-                    task.result = f"Widget {current_task.operation} operation completed successfully"
+                    # Store the full database operation as the result (not just a message)
+                    db_operation = widget_result.get("database_operation")
+                    if db_operation:
+                        logger.info(f"🎯 STORING DATABASE OPERATION for task {task.task_id}: {db_operation.get('operation_type')} with widget_data keys: {list(db_operation.get('widget_data', {}).keys())}")
+                        task.result = db_operation
+                        task.database_operation = db_operation
+                    else:
+                        logger.info(f"❌ NO DATABASE OPERATION found for task {task.task_id} - using fallback string")
+                        task.result = f"Widget {current_task.operation} operation completed successfully"
                     
                     # Capture the actual widget_id from the completed task
                     actual_widget_id = widget_result.get("widget_id")
@@ -643,6 +694,7 @@ supervisor_tools = [
     analyze_available_data,    # Data analysis
     plan_widget_tasks,         # Task planning + dependency resolution
     execute_widget_tasks,      # Task execution + status checking  
+    finalize_created_widgets,  # Finalize widgets created by widget teams (unified tool)
     finalize_response         # Response finalization + error handling
 ]
 
@@ -901,6 +953,28 @@ def top_level_supervisor(state) -> Dict[str, Any]:
             supervisor_state = TopLevelSupervisorState(**state)
         else:
             supervisor_state = state
+            
+        # Check if we should automatically execute database operations
+        if getattr(supervisor_state, 'auto_execute_database_ops', False):
+            try:
+                logger.info("🚀 Auto-finalizing created widgets...")
+                
+                # Finalize widgets created by completed widget agent tasks
+                finalize_result = finalize_created_widgets(supervisor_state, "auto_finalize")
+                
+                # Update state to mark widgets as finalized
+                if hasattr(finalize_result, 'update'):
+                    for key, value in finalize_result.update.items():
+                        setattr(supervisor_state, key, value)
+                    # Mark widgets as finalized
+                    supervisor_state.database_operations_executed = True
+                    supervisor_state.auto_execute_database_ops = False  # Clear the flag
+                
+                logger.info("✅ Auto-execution of database operations completed")
+                
+            except Exception as e:
+                logger.error(f"Failed to auto-execute database operations: {e}")
+                # Continue with normal supervisor flow even if auto-execution fails
             
         # Create the supervisor agent with current state for dynamic variable compilation
         supervisor_agent = create_top_level_supervisor(supervisor_state)

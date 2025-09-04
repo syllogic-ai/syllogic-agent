@@ -21,16 +21,12 @@ class CreateWidgetInput(BaseModel):
     config: Dict[str, Any] = Field(description="Widget configuration")
     widget_id: Optional[str] = Field(default=None, description="Specific widget ID to use (if not provided, generates new UUID)")
     data: Optional[Dict[str, Any]] = Field(default=None, description="Widget data")
-    sql: Optional[str] = Field(default=None, description="SQL query")
-    layout: Optional[Dict[str, Any]] = Field(
-        default=None, description="React Grid Layout position"
-    )
-    chat_id: Optional[str] = Field(
-        default=None, description="Chat ID if created from chat"
-    )
     order: Optional[int] = Field(default=None, description="Order for positioning")
     summary: Optional[str] = Field(
         default=None, description="Brief VLLM-friendly widget summary"
+    )
+    is_configured: Optional[bool] = Field(
+        default=None, description="Configuration status"
     )
 
 
@@ -44,15 +40,10 @@ class UpdateWidgetInput(BaseModel):
         default=None, description="Widget configuration"
     )
     data: Optional[Dict[str, Any]] = Field(default=None, description="Widget data")
-    sql: Optional[str] = Field(default=None, description="SQL query")
-    layout: Optional[Dict[str, Any]] = Field(
-        default=None, description="React Grid Layout position"
-    )
     order: Optional[int] = Field(default=None, description="Order for positioning")
     is_configured: Optional[bool] = Field(
         default=None, description="Configuration status"
     )
-    cache_key: Optional[str] = Field(default=None, description="Cache key")
     summary: Optional[str] = Field(
         default=None, description="Brief VLLM-friendly widget summary"
     )
@@ -112,7 +103,6 @@ class SupervisorDecision(BaseModel):
     next_node: Literal[
         "data",
         "validate_data", 
-        "db_operations_node",
         "text_block_node",
         "end",
     ]
@@ -136,8 +126,9 @@ class WidgetAgentState(BaseModel):
     operation: Literal["CREATE", "UPDATE", "DELETE"]
     widget_type: Literal["line", "bar", "pie", "area", "radial", "kpi", "table", "text"]
     widget_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    reference_widget_id: Optional[str] = Field(
-        default=None, description="Widget ID to reference for text blocks (e.g., chart widget being explained)"
+    reference_widget_data: Optional[List[Dict[str, Any]]] = Field(
+        default=None, 
+        description="List of widget data from other completed tasks to reference for text blocks (e.g., chart widget configs being explained)"
     )
     dashboard_id: str = Field(description="Dashboard identifier for the widget")
     chat_id: Optional[str] = Field(default=None, description="Chat ID if created from chat")
@@ -174,6 +165,12 @@ class WidgetAgentState(BaseModel):
     widget_creation_completed: bool = False
     widget_update_completed: bool = False
     widget_deletion_completed: bool = False
+    
+    # Database operation object for top-level supervisor
+    database_operation: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Database operation object to be executed by top-level supervisor"
+    )
 
     # Timestamps
     created_at: datetime = Field(default_factory=datetime.now)
@@ -502,8 +499,9 @@ class DelegatedTask(BaseModel):
     widget_id: Optional[str] = Field(
         default=None, description="Widget ID for UPDATE/DELETE operations or context reference"
     )
-    reference_widget_id: Optional[str] = Field(
-        default=None, description="Widget ID to reference for text blocks (e.g., chart widget being explained)"
+    reference_widget_data: Optional[List[Dict[str, Any]]] = Field(
+        default=None, 
+        description="List of widget data from other completed tasks to reference for text blocks (e.g., chart widget configs being explained)"
     )
     
     # Additional widget task fields (these contain all needed data for widget_agent_team)
@@ -518,8 +516,9 @@ class DelegatedTask(BaseModel):
     task_group_id: Optional[str] = Field(default=None, description="Task group ID for database")
     
     # Task results
-    result: Optional[str] = Field(default=None, description="Task result summary message")
+    result: Optional[Dict[str, Any]] = Field(default=None, description="Task result data - database operation for completed tasks")
     error_message: Optional[str] = Field(default=None, description="Error if task failed")
+    database_operation: Optional[Dict[str, Any]] = Field(default=None, description="Database operation to be executed by top-level supervisor")
     
     # Timestamps
     created_at: datetime = Field(default_factory=datetime.now)
@@ -585,6 +584,16 @@ class TopLevelSupervisorState(BaseModel):
     tool_failure_counts: Dict[str, int] = Field(default_factory=dict, description="Count of failures per tool")
     max_tool_retries: int = Field(default=3, description="Maximum retries per tool before giving up")
     last_failed_tool: Optional[str] = Field(default=None, description="Name of the last tool that failed")
+    
+    # Database operations queue - stores objects to be written to database
+    pending_database_operations: List[Dict[str, Any]] = Field(
+        default_factory=list, 
+        description="Queue of database operations to be executed after all tasks complete"
+    )
+    
+    # Database operations control flags
+    auto_execute_database_ops: bool = Field(default=False, description="Flag to trigger automatic database operations execution")
+    database_operations_executed: bool = Field(default=False, description="Flag tracking if database operations have been executed")
     
     # Timestamps
     created_at: datetime = Field(default_factory=datetime.now)

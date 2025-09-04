@@ -29,6 +29,119 @@ def _get_supabase_client():
 
 logger = logging.getLogger(__name__)
 
+## Dashboard Data Analysis
+
+def get_available_data(dashboard_id: str) -> Dict[str, any]:
+    """Get available data files and their schemas for a dashboard.
+    
+    Args:
+        dashboard_id: Dashboard identifier
+        
+    Returns:
+        Dict containing available files, schemas, and summary
+    """
+    try:
+        supabase = _get_supabase_client()
+        
+        # Get all files associated with this dashboard
+        response = (
+            supabase.table("files")
+            .select("*")
+            .eq("dashboard_id", dashboard_id)
+            .execute()
+        )
+        
+        if not response.data:
+            return {
+                "available_files": [],
+                "file_schemas": [],
+                "data_summary": "No data files available for this dashboard."
+            }
+        
+        available_files = []
+        file_schemas = []
+        
+        for file_record in response.data:
+            file_id = file_record["id"]
+            file_name = file_record.get("name", f"File {file_id}")
+            available_files.append(file_id)
+            
+            try:
+                # Get schema for this file
+                schema = get_schema_from_file(file_id)
+                file_schemas.append({
+                    "file_id": file_id,
+                    "file_name": file_name,
+                    "schema": schema,
+                    "file_type": file_record.get("type", "unknown")
+                })
+            except Exception as e:
+                logger.warning(f"Could not get schema for file {file_id}: {e}")
+                file_schemas.append({
+                    "file_id": file_id,
+                    "file_name": file_name,
+                    "schema": None,
+                    "error": str(e)
+                })
+        
+        # Create summary of available data
+        data_summary = _create_data_summary(file_schemas)
+        
+        return {
+            "available_files": available_files,
+            "file_schemas": file_schemas,
+            "data_summary": data_summary
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting available data: {e}")
+        return {
+            "available_files": [],
+            "file_schemas": [],
+            "data_summary": f"Error retrieving data: {str(e)}"
+        }
+
+
+def _create_data_summary(file_schemas: List[Dict]) -> str:
+    """Create a human-readable summary of available data."""
+    if not file_schemas:
+        return "No data files available."
+    
+    summary_parts = []
+    summary_parts.append(f"Available data files: {len(file_schemas)} file(s)")
+    
+    for file_info in file_schemas:
+        file_name = file_info.get("file_name", "Unknown")
+        file_id = file_info.get("file_id", "Unknown")
+        
+        if file_info.get("error"):
+            summary_parts.append(f"- {file_name} (ID: {file_id}): Error loading schema")
+            continue
+            
+        schema = file_info.get("schema")
+        if not schema:
+            summary_parts.append(f"- {file_name} (ID: {file_id}): No schema available")
+            continue
+            
+        columns = schema.get("columns", [])
+        total_rows = schema.get("total_rows", 0)
+        
+        column_summary = []
+        for col in columns[:5]:  # Show first 5 columns
+            col_name = col.get("name", "unknown")
+            col_type = col.get("type", "unknown")
+            column_summary.append(f"{col_name} ({col_type})")
+        
+        if len(columns) > 5:
+            column_summary.append(f"... and {len(columns) - 5} more columns")
+        
+        summary_parts.append(
+            f"- {file_name} (ID: {file_id}): {total_rows} rows, "
+            f"columns: {', '.join(column_summary)}"
+        )
+    
+    return "\n".join(summary_parts)
+
 ## Files
 
 
@@ -244,7 +357,7 @@ def create_widget(widget_input: CreateWidgetInput) -> Widget:
         # Use provided widget_id if available, otherwise generate new UUID
         widget_id = widget_input.widget_id if widget_input.widget_id else str(uuid.uuid4())
 
-        # Prepare widget data from input model
+        # Prepare widget data from input model - aligned with new schema
         widget_data = {
             "id": widget_id,
             "dashboard_id": widget_input.dashboard_id,
@@ -253,20 +366,12 @@ def create_widget(widget_input: CreateWidgetInput) -> Widget:
             "config": widget_input.config,
             "created_at": datetime.now().isoformat(),
             "updated_at": datetime.now().isoformat(),
+            "is_configured": widget_input.is_configured if widget_input.is_configured is not None else False,
         }
 
-        # Add optional fields if provided
-        # NOTE: description field is not in the widgets table schema, so we skip it
-        # if widget_input.description is not None:
-        #     widget_data["description"] = widget_input.description
+        # Add optional fields if provided (only fields that exist in the new schema)
         if widget_input.data is not None:
             widget_data["data"] = widget_input.data
-        if widget_input.sql is not None:
-            widget_data["sql"] = widget_input.sql
-        if widget_input.layout is not None:
-            widget_data["layout"] = widget_input.layout
-        if widget_input.chat_id is not None:
-            widget_data["chat_id"] = widget_input.chat_id
         if widget_input.order is not None:
             widget_data["order"] = widget_input.order
         if widget_input.summary is not None:
@@ -315,18 +420,13 @@ def update_widget(update_input: UpdateWidgetInput) -> Widget:
             update_data["type"] = update_input.widget_type
         if update_input.config is not None:
             update_data["config"] = update_input.config
+        # Add fields to update from input model (only fields that exist in the new schema)
         if update_input.data is not None:
             update_data["data"] = update_input.data
-        if update_input.sql is not None:
-            update_data["sql"] = update_input.sql
-        if update_input.layout is not None:
-            update_data["layout"] = update_input.layout
         if update_input.order is not None:
             update_data["order"] = update_input.order
         if update_input.is_configured is not None:
             update_data["is_configured"] = update_input.is_configured
-        if update_input.cache_key is not None:
-            update_data["cache_key"] = update_input.cache_key
         if update_input.summary is not None:
             update_data["summary"] = update_input.summary
 
@@ -353,6 +453,60 @@ def update_widget(update_input: UpdateWidgetInput) -> Widget:
     except Exception as e:
         logger.error(f"Error updating widget {update_input.widget_id}: {str(e)}")
         raise
+
+
+def update_widgets_configuration_status(widget_ids: List[str], is_configured: bool = True) -> Dict[str, Any]:
+    """Update is_configured status for multiple widgets.
+    
+    Args:
+        widget_ids: List of widget IDs to update
+        is_configured: Configuration status to set (default True)
+    
+    Returns:
+        Dict with update results
+    
+    Raises:
+        Exception: If widget update fails
+    """
+    try:
+        if not widget_ids:
+            return {"success": True, "updated_count": 0, "message": "No widget IDs provided"}
+            
+        supabase = _get_supabase_client()
+        
+        # Update all widgets at once using in_ filter
+        update_data = {
+            "is_configured": is_configured,
+            "updated_at": datetime.now().isoformat()
+        }
+        
+        result = (
+            supabase.table("widgets")
+            .update(update_data)
+            .in_("id", widget_ids)
+            .execute()
+        )
+        
+        updated_count = len(result.data) if result.data else 0
+        
+        logger.info(f"Updated is_configured={is_configured} for {updated_count} widgets")
+        
+        return {
+            "success": True,
+            "updated_count": updated_count,
+            "requested_count": len(widget_ids),
+            "message": f"Successfully updated configuration status for {updated_count} widgets"
+        }
+        
+    except Exception as e:
+        error_msg = f"Error updating configuration status for widgets {widget_ids}: {str(e)}"
+        logger.error(error_msg)
+        return {
+            "success": False,
+            "updated_count": 0,
+            "message": error_msg,
+            "error": str(e)
+        }
 
 
 def delete_widget(widget_id: str) -> bool:
@@ -590,6 +744,7 @@ __all__ = [
     # Widget operations
     "create_widget",
     "update_widget",
+    "update_widgets_configuration_status",
     "delete_widget",
     "get_widget_specs",
     "get_widgets_from_dashboard_id",

@@ -4,6 +4,8 @@
 
 This document provides a comprehensive analysis of the multi-agent system built using LangGraph for dashboard widget creation and management. The system implements a hierarchical supervisor pattern with specialized agent teams working together to process user requests and create data visualizations.
 
+**IMPORTANT**: This architecture strictly follows the CLAUDE.md guidelines for code organization, with clear separation between agent logic, helper functions, and configuration management.
+
 ## Core Libraries and Dependencies
 
 ### Primary Framework Stack
@@ -30,10 +32,16 @@ This document provides a comprehensive analysis of the multi-agent system built 
 
 ### High-Level Architecture
 
-The system follows a **Hierarchical Supervisor Pattern** with two main levels:
+The system follows a **Hierarchical Supervisor Pattern** with two main levels, strictly adhering to CLAUDE.md guidelines:
 
 1. **Top-Level Supervisor**: Orchestrates overall task flow and delegates to specialized teams
 2. **Widget Agent Team**: Specialized team for widget creation, data processing, and validation
+
+**Code Organization** (Following CLAUDE.md):
+- **Graph Definition**: `src/agent/graph.py` - ONLY graph structure, no business logic
+- **Helper Functions**: `src/actions/` - ALL utility functions centralized here
+- **Agent Tools**: `src/agent/agents/{team}/tools/` - ONLY agent-specific tools, NO helper functions
+- **Configuration**: `src/config.py` - ALL environment variables and clients
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -147,10 +155,10 @@ START → widget_supervisor → [data|validate_data|db_operations_node|text_bloc
 
 **Agent Type**: `create_react_agent` with structured output
 
-**Tools Available**:
+**Tools Available** (Following CLAUDE.md - Tools wrap helper functions from `src/actions/`):
 - **`analyze_available_data`**: 
   - Analyzes dashboard data files and schemas
-  - Uses: `get_available_data()` from data_reader
+  - **Agent Tool**: Wraps `get_available_data()` from `actions.dashboard`
   - Output: Data summary and file information
 
 - **`plan_widget_tasks`**: 
@@ -163,6 +171,11 @@ START → widget_supervisor → [data|validate_data|db_operations_node|text_bloc
   - Handles task dependency resolution
   - Updates task status and captures results
 
+- **`finalize_created_widgets`**:
+  - **Agent Tool**: Wraps `update_widgets_configuration_status()` from `actions.dashboard`
+  - Finalizes widgets created by completed tasks
+  - Marks widgets as configured (live)
+
 - **`finalize_response`**: 
   - Generates final response to user
   - Handles both success and error cases
@@ -172,6 +185,11 @@ START → widget_supervisor → [data|validate_data|db_operations_node|text_bloc
 - Uses `TopLevelSupervisorState` with 23+ fields
 - Tracks delegated tasks, supervisor status, and execution context
 - Supports error handling and retry logic
+
+**Code Organization Compliance**:
+- ✅ Agent logic in `src/agent/agents/top_level_supervisor/`
+- ✅ Helper functions in `src/actions/`
+- ✅ Agent tools only wrap helper functions
 
 ### Widget Agent Team Nodes
 
@@ -196,14 +214,15 @@ next_node ∈ ["data", "validate_data", "db_operations_node", "text_block_node",
 
 **Agent Type**: `create_react_agent` with specialized tools
 
-**Tools Available**:
+**Tools Available** (Following CLAUDE.md - Agent tools only):
 - **`fetch_data_tool`**: 
+  - **Agent Tool**: Wraps data fetching from `actions.dashboard`
   - Fetches raw data from file IDs
   - Creates `FileSchema` and `FileSampleData` objects
-  - Uses dashboard functions from `actions.dashboard`
+  - Uses: `get_data_from_file()`, `get_schema_from_file()`, `get_sample_from_file()`
 
 - **`generate_and_execute_python_code_tool`**: 
-  - Merged tool that generates AND executes Python code
+  - **Agent Tool**: Combines code generation and E2B execution
   - Creates E2B sandbox, generates code using Langfuse prompts
   - Executes code in sandboxed environment with data context
   - Validates output against `ChartConfigSchema`
@@ -213,6 +232,11 @@ next_node ∈ ["data", "validate_data", "db_operations_node", "text_block_node",
 ```
 fetch_data → generate_and_execute_code (E2B sandbox + validation)
 ```
+
+**Code Organization Compliance**:
+- ✅ Agent logic in `src/agent/agents/widget_agent_team/`
+- ✅ Data processing helpers in `src/actions/dashboard.py`
+- ✅ E2B helpers in `src/actions/e2b_sandbox.py`
 
 #### 3. Validation Node
 **Location**: `src/agent/agents/widget_agent_team/validation_agent.py`
@@ -240,29 +264,45 @@ class DataValidationResult:
 
 **Agent Type**: Direct database operations (no LLM)
 
-**Operations Supported**:
+**Operations Supported** (Following CLAUDE.md - Uses helper functions from `src/actions/`):
 - **CREATE**: Creates new widget with `CreateWidgetInput`
 - **UPDATE**: Updates existing widget with `UpdateWidgetInput` 
 - **DELETE**: Removes widget by ID
 
-**Integration**: Uses functions from `actions.dashboard`:
-- `create_widget()`
-- `update_widget()` 
-- `delete_widget()`
+**Integration**: Uses helper functions from `actions.dashboard`:
+- `create_widget()` - Helper function for widget creation
+- `update_widget()` - Helper function for widget updates
+- `delete_widget()` - Helper function for widget deletion
+
+**Code Organization Compliance**:
+- ✅ Database agent logic in `src/agent/agents/widget_agent_team/`
+- ✅ ALL database operations in `src/actions/dashboard.py`
+- ✅ NO direct database access in agent code
 
 #### 5. Text Block Node
 **Location**: `src/agent/agents/widget_agent_team/text_block_agent.py`
 
 **Agent Type**: `create_react_agent` for HTML content generation
 
-**Tools Available**:
-- **`fetch_widget_details`**: Retrieves referenced widget information
-- **`generate_text_content`**: Creates HTML content using Langfuse prompts
+**Tools Available** (Following CLAUDE.md - Agent tools only):
+- **`fetch_widget_details`**: 
+  - **Agent Tool**: Wraps widget retrieval from `actions.dashboard`
+  - Retrieves referenced widget information
+  - Uses: `get_widget_specs()` helper function
+- **`generate_text_content`**: 
+  - **Agent Tool**: Creates HTML content using Langfuse prompts
+  - Generates semantic HTML without inline styles
+  - Uses structured output with `TextBlockContentSchema`
 
 **Special Features**:
 - Supports widget references via `reference_widget_id`
 - Generates semantic HTML without inline styles
 - Uses structured output with `TextBlockContentSchema`
+
+**Code Organization Compliance**:
+- ✅ Text block agent logic in `src/agent/agents/widget_agent_team/`
+- ✅ Widget retrieval helpers in `src/actions/dashboard.py`
+- ✅ Prompt management in `src/actions/prompts.py`
 
 ## Supported Widget Types and Operations
 
@@ -377,10 +417,12 @@ This enables:
 - **E2B**: Sandboxed code execution
 - **Langfuse**: Prompt management and observability
 
-### Configuration Management
-- **Environment Variables**: Managed via `config.py`
-- **Langfuse Integration**: Dynamic prompt compilation
-- **Model Configuration**: Centralized LLM settings
+### Configuration Management (Following CLAUDE.md)
+- **Environment Variables**: ALL managed in `src/config.py` (centralized)
+- **External Clients**: ALL initialized in `src/config.py` (Supabase, Langfuse, E2B)
+- **Langfuse Integration**: Dynamic prompt compilation via `src/config.py`
+- **Model Configuration**: Centralized LLM settings in `src/config.py`
+- **Graph Business Logic**: Moved to `src/actions/graph_helpers.py`
 
 ### Error Handling Strategy
 - **Retry Logic**: Tool-specific failure counts and limits
@@ -406,3 +448,56 @@ This enables:
 - Dynamic workflow adaptation based on context
 
 This architecture provides a robust, scalable foundation for multi-agent dashboard widget creation with clear separation of concerns, type safety, and comprehensive error handling.
+
+## CLAUDE.md Compliance
+
+This architecture has been fully refactored to comply with the CLAUDE.md guidelines:
+
+### ✅ Code Organization Rules Followed
+
+**DO's Implemented:**
+- ✅ **Helper Functions**: ALL utility functions moved to `src/actions/` in appropriate files
+- ✅ **Agent Nodes**: Each node in separate files for readability
+- ✅ **Configuration**: ALL clients and environment variables centralized in `src/config.py`
+- ✅ **Graph Structure**: `src/agent/graph.py` contains ONLY graph definition, NO business logic
+- ✅ **Agent Tools**: Agent `tools/` folders contain ONLY agent tools that wrap helper functions
+- ✅ **Type Safety**: Proper type hints and Pydantic models throughout
+- ✅ **Documentation**: Comprehensive docstrings following guidelines
+
+**DON'Ts Eliminated:**
+- ❌ **Business Logic in graph.py**: Moved to `src/actions/graph_helpers.py`
+- ❌ **Helper Functions in Agent Tools**: Moved to `src/actions/dashboard.py`
+- ❌ **Duplicated Database Operations**: Consolidated in `src/actions/dashboard.py`
+- ❌ **Direct Database Access**: ALL goes through helper functions
+- ❌ **Environment Variables**: ALL centralized in `src/config.py`
+
+### 📁 File Organization Summary
+
+```
+src/
+├── actions/                    # ✅ ALL helper functions centralized
+│   ├── dashboard.py           # ✅ Data & widget operations
+│   ├── graph_helpers.py       # ✅ Business logic from graph.py
+│   ├── database_operations.py # ✅ Database helpers
+│   └── ...
+├── agent/
+│   ├── graph.py              # ✅ ONLY graph structure, no business logic
+│   └── agents/
+│       ├── top_level_supervisor/
+│       │   ├── tools/        # ✅ ONLY agent tools (wrap helpers)
+│       │   └── ...
+│       └── widget_agent_team/
+│           ├── tools/        # ✅ ONLY agent tools (wrap helpers)
+│           └── ...
+└── config.py                 # ✅ ALL environment variables & clients
+```
+
+### 🔄 Key Refactoring Changes
+
+1. **Moved `get_available_data()`** from agent tools to `actions.dashboard.py`
+2. **Moved business logic functions** from `graph.py` to `actions.graph_helpers.py`
+3. **Centralized Langfuse configuration** in `config.py`
+4. **Eliminated duplicate database operations** between agent tools and actions
+5. **Updated all agent tools** to wrap helper functions instead of containing business logic
+
+This ensures the architecture is maintainable, testable, and follows the strict separation of concerns mandated by CLAUDE.md guidelines.
