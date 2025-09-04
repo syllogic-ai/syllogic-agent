@@ -136,8 +136,8 @@ class WidgetSupervisor:
                 "file_count": len(state.file_ids),
                 "widget_configured": bool(state.title and state.description),
                 "dashboard_id": state.dashboard_id,
-                "reference_widget_data": state.reference_widget_data,
-                "has_reference_widget": state.reference_widget_data is not None and len(state.reference_widget_data) > 0,
+                "reference_widget_id": state.reference_widget_id,
+                "has_reference_widget": len(state.reference_widget_id) > 0,
             },
         }
         

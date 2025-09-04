@@ -17,7 +17,7 @@ from langgraph.types import Command, Send
 from langgraph.graph import END
 from typing_extensions import Annotated
 
-from agent.models import TopLevelSupervisorState, WidgetAgentState, DelegatedTask
+from agent.models import TopLevelSupervisorState, WidgetAgentState, DelegatedTask, TaskDependency
 from .tools.data_reader import get_available_data
 from .tools.task_manager import update_task_status, get_pending_tasks
 from .tools.database_operations import finalize_created_widgets
@@ -218,23 +218,9 @@ def plan_widget_tasks(
         # Create DelegatedTask objects from the AI plan
         created_task_names = []
         updated_tasks = state.delegated_tasks.copy()  # Start with existing tasks
+        updated_task_dependencies = state.task_dependencies.copy()  # Start with existing dependencies
         
-        for task_request in task_plan.tasks:
-            # Supervisor logic: Detect if this is a text block that should reference other widgets
-            reference_widget_data = None
-            if (task_request.widget_type == "text" and 
-                any(keyword in task_request.task_instructions.lower() for keyword in 
-                    ["reference", "explain", "analyze", "describe the chart", "describe the bar chart", "seasonal", "trend"])):
-                # Auto-detect reference widget data from completed chart tasks
-                reference_widget_data = []
-                for completed_task in state.delegated_tasks:
-                    if (completed_task.task_status == "completed" and
-                        completed_task.widget_type in ["bar", "line", "pie", "area", "radial"] and
-                        hasattr(completed_task, 'result') and 
-                        isinstance(completed_task.result, dict)):
-                        reference_widget_data.append(completed_task.result)
-                        logger.info(f"Auto-detected reference widget data for text block from completed {completed_task.widget_type} chart task {completed_task.task_id}")
-            
+        for i, task_request in enumerate(task_plan.tasks):
             # Create each task directly using DelegatedTask model
             new_task = DelegatedTask(
                 target_agent="widget_agent_team",
@@ -249,12 +235,37 @@ def plan_widget_tasks(
                 dashboard_id=state.dashboard_id,
                 chat_id=state.chat_id,
                 widget_id=task_request.widget_id,
-                reference_widget_data=reference_widget_data,
+                reference_widget_id=[],  # Start empty, will be populated when dependencies resolve
                 task_status="pending",  # Always create as pending
                 task_group_id=task_group_id  # Set task group ID
             )
             updated_tasks.append(new_task)
             created_task_names.append(f"{task_request.title} ({task_request.widget_type})")
+            
+            # Create dependency tracking for text blocks that should reference other tasks
+            if (task_request.widget_type == "text" and 
+                any(keyword in task_request.task_instructions.lower() for keyword in 
+                    ["reference", "explain", "analyze", "describe", "describe the chart", "describe the bar chart", "seasonal", "trend"])):
+                
+                # Find which tasks this text block should depend on (typically chart tasks created before it)
+                dependent_task_ids = []
+                for j, other_task in enumerate(task_plan.tasks):
+                    if (j < i and  # Only tasks created before this text block
+                        other_task.widget_type in ["bar", "line", "pie", "area", "radial"]):  # Chart types
+                        # Find the corresponding task ID from our created tasks
+                        other_delegated_task = updated_tasks[len(state.delegated_tasks) + j]
+                        dependent_task_ids.append(other_delegated_task.task_id)
+                        logger.info(f"Text block task {new_task.task_id} will depend on {other_task.widget_type} task {other_delegated_task.task_id}")
+                
+                if dependent_task_ids:
+                    # Create dependency tracking entry
+                    task_dependency = TaskDependency(
+                        task_id=new_task.task_id,
+                        dependent_on=dependent_task_ids,
+                        reference_widget_ids=[]  # Will be populated when dependent tasks complete
+                    )
+                    updated_task_dependencies.append(task_dependency)
+                    logger.info(f"Created dependency tracking for task {new_task.task_id} dependent on tasks: {dependent_task_ids}")
         
         # Create database tasks and task list message
         try:
@@ -312,6 +323,7 @@ def plan_widget_tasks(
         return Command(
             update={
                 "delegated_tasks": updated_tasks,  # CRITICAL: Include updated tasks in state
+                "task_dependencies": updated_task_dependencies,  # CRITICAL: Include dependency tracking
                 "current_reasoning": f"AI planning completed: {len(task_plan.tasks)} widget tasks created based on intelligent analysis of user request and available data.",
                 "supervisor_status": "monitoring",  # Ready to monitor task execution
                 "updated_at": datetime.now(),
@@ -421,73 +433,118 @@ def execute_widget_tasks(
                 }
             )
         
-        # Initialize dependency tracking variables
+        # NEW: Proper dependency resolution using task_dependencies tracking
+        updated_dependencies = []  # Create new list to avoid mutating original
+        updated_tasks = state.delegated_tasks.copy()  # Create copy for task updates
         dependencies_resolved = 0
-        has_text_blocks_needing_charts = any(
-            task.widget_type == "text" and 
-            ("chart" in task.task_instructions.lower() or "widget" in task.task_instructions.lower()) and
-            ("reference" in task.task_instructions.lower() or "explain" in task.task_instructions.lower() or "analyze" in task.task_instructions.lower()) and
-            not task.reference_widget_data
-            for task in pending_tasks
-        )
         
-        # If we have text blocks that need chart references but haven't been resolved
-        if has_text_blocks_needing_charts:
-            logger.info("Automatically resolving task dependencies before executing text block tasks")
+        # Process each dependency and create updated versions
+        for dependency in state.task_dependencies:
+            updated_dependency = TaskDependency(
+                task_id=dependency.task_id,
+                dependent_on=dependency.dependent_on.copy(),
+                reference_widget_ids=dependency.reference_widget_ids.copy()
+            )
             
-            for task in state.delegated_tasks:
-                # Look for text block tasks that need widget references (more flexible detection)
-                if (task.widget_type == "text" and 
-                    task.task_status == "pending" and 
-                    ("chart" in task.task_instructions.lower() or "widget" in task.task_instructions.lower()) and
-                    ("reference" in task.task_instructions.lower() or "explain" in task.task_instructions.lower() or "analyze" in task.task_instructions.lower()) and
-                    not task.reference_widget_data):
-                    
-                    # Find a completed chart task to reference
-                    chart_task_id = None
-                    chart_task_result = None
-                    
-                    # Look for completed chart/data tasks (expanded chart types)
-                    for other_task in state.delegated_tasks:
-                        if (other_task.widget_type in ["bar", "line", "pie", "area", "radial", "kpi", "table"] and 
-                            other_task.task_status == "completed" and
-                            hasattr(other_task, 'result') and 
-                            isinstance(other_task.result, dict)):
-                            chart_task_id = other_task.task_id
-                            chart_task_result = other_task.result
-                            break
-                    
-                    if chart_task_result:
-                        # Update the text block task with the actual widget data
-                        task.reference_widget_data = [chart_task_result]
-                        
-                        # Update task instructions to reflect that dependency is resolved
-                        if "reference_widget_id" in task.task_instructions:
-                            updated_task_instructions = task.task_instructions.replace(
-                                "reference_widget_id",
-                                f"reference_widget_data (from completed task {chart_task_id})"
-                            )
-                            task.task_instructions = updated_task_instructions
-                        
-                        dependencies_resolved += 1
-                        
-                        logger.info(f"Auto-resolved dependency: Text task {task.task_id} now has reference data from completed task {chart_task_id}")
+            # Check if we need to resolve dependencies for this task
+            pending_task = next(
+                (task for task in pending_tasks if task.task_id == dependency.task_id),
+                None
+            )
             
-            # Update pending_tasks list after dependency resolution
-            pending_tasks = [
-                task for task in state.delegated_tasks 
-                if task.target_agent == "widget_agent_team" and task.task_status == "pending"
-            ]
+            if (pending_task and 
+                len(updated_dependency.reference_widget_ids) < len(updated_dependency.dependent_on)):
+                
+                logger.info(f"Resolving dependencies for pending task {dependency.task_id}...")
+                
+                # Find completed tasks this dependency depends on
+                for dependent_task_id in updated_dependency.dependent_on:
+                    # Check if this dependent task has completed and has a widget_id
+                    completed_task = next(
+                        (task for task in state.delegated_tasks 
+                         if task.task_id == dependent_task_id and task.task_status == "completed"),
+                        None
+                    )
+                    
+                    if completed_task:
+                        # Use completed_widget_ids mapping to get the actual widget_id
+                        widget_id = state.completed_widget_ids.get(completed_task.task_id)
+                        
+                        if widget_id and widget_id not in updated_dependency.reference_widget_ids:
+                            updated_dependency.reference_widget_ids.append(widget_id)
+                            dependencies_resolved += 1
+                            logger.info(f"✅ Resolved dependency: Task {dependency.task_id} now has widget {widget_id} from completed task {dependent_task_id}")
             
-            if dependencies_resolved > 0:
-                logger.info(f"Successfully auto-resolved {dependencies_resolved} dependencies, proceeding with task execution")
+            updated_dependencies.append(updated_dependency)
+        
+        # Update the tasks with resolved dependencies
+        for task in updated_tasks:
+            dependency = next(
+                (dep for dep in updated_dependencies if dep.task_id == task.task_id),
+                None
+            )
+            if dependency:
+                task.reference_widget_id = dependency.reference_widget_ids.copy()
+                logger.info(f"✅ Updated task {task.task_id} reference_widget_id: {task.reference_widget_id}")
+        
+        if dependencies_resolved > 0:
+            logger.info(f"✅ Successfully resolved {dependencies_resolved} task dependencies")
+        else:
+            logger.info("ℹ️ No new dependencies to resolve at this time")
+        
+        # Check if we had any pending dependencies to process
+        has_pending_dependencies = dependencies_resolved > 0
+        
+        # Update pending_tasks list after dependency resolution
+        all_pending_tasks = [
+            task for task in updated_tasks 
+            if task.target_agent == "widget_agent_team" and task.task_status == "pending"
+        ]
+        
+        # IMPORTANT: Filter out tasks that have unresolved dependencies
+        ready_tasks = []
+        blocked_tasks = []
+        
+        for task in all_pending_tasks:
+            # Check if this task has dependencies
+            task_dependency = next(
+                (dep for dep in updated_dependencies if dep.task_id == task.task_id),
+                None
+            )
+            
+            if task_dependency:
+                # This task has dependencies - check if they're all resolved
+                unresolved_count = len(task_dependency.dependent_on) - len(task_dependency.reference_widget_ids)
+                if unresolved_count > 0:
+                    blocked_tasks.append(task)
+                    logger.info(f"⏳ Task {task.task_id} ({task.widget_type}) blocked - waiting for {unresolved_count} dependencies")
+                    continue
+                else:
+                    logger.info(f"✅ Task {task.task_id} ({task.widget_type}) ready - all dependencies resolved")
+            
+            ready_tasks.append(task)
+        
+        if not ready_tasks:
+            if blocked_tasks:
+                message = f"No tasks ready to execute - {len(blocked_tasks)} tasks blocked waiting for dependencies"
+                logger.info(message)
+                return Command(
+                    update={
+                        "task_dependencies": updated_dependencies,
+                        "messages": [ToolMessage(content=message, tool_call_id=tool_call_id)],
+                    }
+                )
             else:
-                logger.warning("No dependencies could be auto-resolved, but proceeding with text widget tasks anyway")
-                # Don't fail completely - proceed with text widgets even without references
-                # They can still generate standalone content
+                message = "No pending widget tasks to execute"
+                return Command(
+                    update={
+                        "messages": [ToolMessage(content=message, tool_call_id=tool_call_id)],
+                    }
+                )
         
-        # Process the first pending task (one at a time for now)
-        current_task = pending_tasks[0]
+        # Process the first ready task (prioritizing independent tasks)
+        current_task = ready_tasks[0]
+        logger.info(f"🎯 Executing ready task: {current_task.task_id} ({current_task.widget_type}) - {len(ready_tasks)} total ready tasks")
         
         # Import widget graph here to avoid circular imports
         from agent.graph import build_widget_agent_graph
@@ -505,7 +562,7 @@ def execute_widget_tasks(
             "chat_id": current_task.chat_id,
             "file_ids": current_task.file_ids,
             "widget_id": current_task.widget_id or str(uuid.uuid4()),  # Generate ID if None
-            "reference_widget_data": current_task.reference_widget_data,  # For text blocks referencing other widgets
+            "reference_widget_id": current_task.reference_widget_id,  # For text blocks referencing other widgets
             "title": current_task.title,
             "description": current_task.description,
             "task_status": "in_progress",
@@ -529,10 +586,10 @@ def execute_widget_tasks(
         widget_result = widget_graph.invoke(widget_input)
         
         # Update task status based on widget result
-        updated_tasks = []
+        final_updated_tasks = []
         updated_completed_widget_ids = state.completed_widget_ids.copy()
         
-        for task in state.delegated_tasks:
+        for task in updated_tasks:
             if task.task_id == current_task.task_id:
                 # Update task with result
                 task.task_status = widget_result.get("task_status", "completed")
@@ -581,21 +638,22 @@ def execute_widget_tasks(
                     except Exception as db_error:
                         logger.warning(f"Failed to update database task status: {db_error}")
                     
-            updated_tasks.append(task)
+            final_updated_tasks.append(task)
         
         # Create execution message including dependency resolution if it occurred
         execution_message = f"✅ **WIDGET TASK EXECUTED**\n\nCompleted {current_task.operation} {current_task.widget_type} widget task\nStatus: {widget_result.get('task_status', 'completed')}"
         
         # Add dependency resolution message if we resolved any
-        if has_text_blocks_needing_charts and dependencies_resolved > 0:
-            execution_message += f"\n\n🔗 **Auto-resolved {dependencies_resolved} task dependency(ies)** before execution."
+        if has_pending_dependencies and dependencies_resolved > 0:
+            execution_message += f"\n\n🔗 **Resolved {dependencies_resolved} task dependency(ies)** before execution."
         
         logger.info(f"Widget task {current_task.task_id} completed with status: {widget_result.get('task_status')}")
         
         return Command(
             update={
-                "delegated_tasks": updated_tasks,
+                "delegated_tasks": final_updated_tasks,
                 "completed_widget_ids": updated_completed_widget_ids,
+                "task_dependencies": updated_dependencies,  # Include updated dependency tracking
                 "supervisor_status": "analyzing",  # Return to analyzing to check for more tasks
                 "current_reasoning": f"Widget task completed: {widget_result.get('task_status', 'completed')}",
                 "updated_at": datetime.now(),

@@ -5,7 +5,8 @@
       "mcp__langfuse_1__get-prompts",
       "mcp__langfuse_1__get-prompt",
       "Bash(python:*)",
-      "Bash(make test:*)"
+      "Bash(make test:*)",
+      "Bash(make lint:*)"
     ],
     "deny": [],
     "ask": []

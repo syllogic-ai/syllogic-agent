@@ -732,6 +732,119 @@ def get_sample_data_from_files(file_ids: List[str]) -> Dict[str, Any]:
         raise
 
 
+## Reference Widget Operations
+
+def fetch_reference_widget_details(widget_id: str) -> Dict[str, Any]:
+    """Fetch widget details including config from database for reference purposes.
+    
+    This helper function is used by text block agents to fetch details of widgets
+    they need to reference or explain. Follows CLAUDE.md guidelines by centralizing
+    database operations in actions.
+    
+    Args:
+        widget_id: Widget identifier to fetch
+        
+    Returns:
+        Dict containing widget details with config, title, type, etc.
+        
+    Raises:
+        Exception: If widget not found or fetch fails
+    """
+    try:
+        supabase = _get_supabase_client()
+        
+        # Fetch widget details from database  
+        widget_result = (
+            supabase.table("widgets")
+            .select("id, title, type, config, data, dashboard_id, summary, order, is_configured")
+            .eq("id", widget_id)
+            .single()
+            .execute()
+        )
+        
+        if not widget_result.data:
+            raise Exception(f"Reference widget {widget_id} not found")
+            
+        widget_data = widget_result.data
+        
+        logger.info(f"Successfully fetched reference widget details for {widget_id}")
+        
+        return {
+            "widget_id": widget_data["id"],
+            "title": widget_data.get("title", ""),
+            "description": "",  # Description not in database schema - use empty string
+            "widget_type": widget_data.get("type", ""),  # Field is 'type' not 'widget_type'
+            "config": widget_data.get("config", {}),
+            "data": widget_data.get("data", {}),
+            "summary": widget_data.get("summary", ""),
+            "order": widget_data.get("order", 0),
+            "is_configured": widget_data.get("is_configured", False),
+            "dashboard_id": widget_data.get("dashboard_id", "")
+        }
+        
+    except Exception as e:
+        error_msg = f"Failed to fetch reference widget details for {widget_id}: {str(e)}"
+        logger.error(error_msg)
+        raise Exception(error_msg) from e
+
+
+def fetch_multiple_reference_widget_details(widget_ids: List[str]) -> List[Dict[str, Any]]:
+    """Fetch details for multiple reference widgets from database.
+    
+    This helper function efficiently fetches details for multiple widgets
+    that need to be referenced by text blocks.
+    
+    Args:
+        widget_ids: List of widget identifiers to fetch
+        
+    Returns:
+        List of dicts containing widget details, empty list if none found
+        
+    Raises:
+        Exception: If database query fails
+    """
+    if not widget_ids:
+        return []
+        
+    try:
+        supabase = _get_supabase_client()
+        
+        # Fetch multiple widgets in a single query
+        widgets_result = (
+            supabase.table("widgets")
+            .select("id, title, type, config, data, dashboard_id, summary, order, is_configured")
+            .in_("id", widget_ids)
+            .execute()
+        )
+        
+        if not widgets_result.data:
+            logger.warning(f"No reference widgets found for IDs: {widget_ids}")
+            return []
+        
+        reference_widgets = []
+        for widget_data in widgets_result.data:
+            reference_widgets.append({
+                "widget_id": widget_data["id"],
+                "title": widget_data.get("title", ""),
+                "description": "",  # Description not in database schema
+                "widget_type": widget_data.get("type", ""),
+                "config": widget_data.get("config", {}),
+                "data": widget_data.get("data", {}),
+                "summary": widget_data.get("summary", ""),
+                "order": widget_data.get("order", 0),
+                "is_configured": widget_data.get("is_configured", False),
+                "dashboard_id": widget_data.get("dashboard_id", "")
+            })
+        
+        logger.info(f"Successfully fetched {len(reference_widgets)} reference widgets from {len(widget_ids)} requested")
+        return reference_widgets
+        
+    except Exception as e:
+        error_msg = f"Failed to fetch reference widget details for {widget_ids}: {str(e)}"
+        logger.error(error_msg)
+        raise Exception(error_msg) from e
+
+
 # Export all public functions
 __all__ = [
     # File operations
@@ -749,4 +862,7 @@ __all__ = [
     "get_widget_specs",
     "get_widgets_from_dashboard_id",
     "get_widget_from_widget_id",
+    # Reference widget operations
+    "fetch_reference_widget_details",
+    "fetch_multiple_reference_widget_details",
 ]

@@ -126,9 +126,9 @@ class WidgetAgentState(BaseModel):
     operation: Literal["CREATE", "UPDATE", "DELETE"]
     widget_type: Literal["line", "bar", "pie", "area", "radial", "kpi", "table", "text"]
     widget_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    reference_widget_data: Optional[List[Dict[str, Any]]] = Field(
-        default=None, 
-        description="List of widget data from other completed tasks to reference for text blocks (e.g., chart widget configs being explained)"
+    reference_widget_id: List[str] = Field(
+        default_factory=list,
+        description="Array of widget IDs that this task depends on. When dependent tasks complete and create widgets, their widget_ids are added to this array."
     )
     dashboard_id: str = Field(description="Dashboard identifier for the widget")
     chat_id: Optional[str] = Field(default=None, description="Chat ID if created from chat")
@@ -499,9 +499,9 @@ class DelegatedTask(BaseModel):
     widget_id: Optional[str] = Field(
         default=None, description="Widget ID for UPDATE/DELETE operations or context reference"
     )
-    reference_widget_data: Optional[List[Dict[str, Any]]] = Field(
-        default=None, 
-        description="List of widget data from other completed tasks to reference for text blocks (e.g., chart widget configs being explained)"
+    reference_widget_id: List[str] = Field(
+        default_factory=list,
+        description="Array of widget IDs that this task depends on. When dependent tasks complete and create widgets, their widget_ids are added to this array."
     )
     
     # Additional widget task fields (these contain all needed data for widget_agent_team)
@@ -524,6 +524,13 @@ class DelegatedTask(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now)
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
+
+
+class TaskDependency(BaseModel):
+    """Track dependencies between tasks."""
+    task_id: str = Field(description="The task that has dependencies")
+    dependent_on: List[str] = Field(default_factory=list, description="Task IDs this task depends on")  
+    reference_widget_ids: List[str] = Field(default_factory=list, description="Widget IDs from completed dependent tasks")
 
 
 class TopLevelSupervisorState(BaseModel):
@@ -563,6 +570,9 @@ class TopLevelSupervisorState(BaseModel):
     )
     completed_widget_ids: Dict[str, str] = Field(
         default_factory=dict, description="Mapping of task_id to actual widget_id for completed tasks"
+    )
+    task_dependencies: List[TaskDependency] = Field(
+        default_factory=list, description="Track which tasks depend on which other tasks and their resolved widget IDs"
     )
     current_reasoning: Optional[str] = Field(
         default=None, description="Current reasoning and analysis"
