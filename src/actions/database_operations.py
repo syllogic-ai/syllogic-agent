@@ -1,13 +1,18 @@
 """Bulk database operations for top-level supervisor."""
 
-import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
 from agent.models import CreateWidgetInput, UpdateWidgetInput
 from actions.utils import import_actions_dashboard
 
-logger = logging.getLogger(__name__)
+# Get logger that uses Logfire if available
+try:
+    from config import get_logfire_logger
+    logger = get_logfire_logger(__name__)
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
 
 
 def execute_bulk_database_operations(

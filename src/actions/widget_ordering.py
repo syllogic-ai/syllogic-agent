@@ -1,7 +1,6 @@
 """Widget ordering functionality using LLM-based analysis with Langfuse integration."""
 
 import json
-import logging
 from datetime import datetime
 from typing import Dict, Any, List
 
@@ -13,7 +12,7 @@ from .dashboard import (
     get_dashboard_widgets_for_ordering,
     update_widgets_order_and_configuration,
 )
-from config import get_langfuse_callback_handler, LANGFUSE_AVAILABLE
+from config import get_langfuse_callback_handler, LANGFUSE_AVAILABLE, get_logfire_logger
 
 # Handle imports for different execution contexts
 try:
@@ -28,7 +27,7 @@ except ImportError:
         sys.path.insert(0, src_path)
     from actions.prompts import compile_prompt, get_prompt_config
 
-logger = logging.getLogger(__name__)
+logger = get_logfire_logger(__name__)
 
 
 def analyze_and_order_dashboard_widgets(

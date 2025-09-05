@@ -3,7 +3,6 @@ Provides functions to fetch data, schema, and samples from stored files.
 """
 
 import io
-import logging
 import os
 import uuid
 from datetime import datetime
@@ -32,7 +31,13 @@ def _get_supabase_client():
         return config_module.get_supabase_client()
 
 
-logger = logging.getLogger(__name__)
+# Get logger that uses Logfire if available
+try:
+    from config import get_logfire_logger
+    logger = get_logfire_logger(__name__)
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
 
 ## Dashboard Data Analysis
 
@@ -391,6 +396,8 @@ def create_widget(widget_input: CreateWidgetInput) -> Widget:
             widget_data["order"] = widget_input.order
         if widget_input.summary is not None:
             widget_data["summary"] = widget_input.summary
+        if widget_input.chat_id is not None:
+            widget_data["chat_id"] = widget_input.chat_id
 
         # Insert widget into database
         result = supabase.table("widgets").insert(widget_data).execute()
@@ -444,6 +451,8 @@ def update_widget(update_input: UpdateWidgetInput) -> Widget:
             update_data["is_configured"] = update_input.is_configured
         if update_input.summary is not None:
             update_data["summary"] = update_input.summary
+        if update_input.chat_id is not None:
+            update_data["chat_id"] = update_input.chat_id
 
         # Update widget in database
         result = (

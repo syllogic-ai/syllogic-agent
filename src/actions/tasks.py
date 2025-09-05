@@ -2,7 +2,6 @@
 Provides functions to create, update, and manage tasks.
 """
 
-import logging
 import uuid
 from datetime import datetime
 from typing import List, Optional
@@ -11,7 +10,13 @@ from supabase import Client
 
 from agent.models import Task, CreateTaskInput, UpdateTaskInput, DelegatedTask
 
-logger = logging.getLogger(__name__)
+# Get logger that uses Logfire if available
+try:
+    from config import get_logfire_logger
+    logger = get_logfire_logger(__name__)
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
 
 
 def create_task(supabase: Client, task_input: CreateTaskInput) -> Task:

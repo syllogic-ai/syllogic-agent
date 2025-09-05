@@ -11,6 +11,14 @@ from typing import Optional
 from dotenv import load_dotenv
 from supabase import Client, create_client
 
+# Import logfire for observability and logging
+try:
+    import logfire
+    LOGFIRE_AVAILABLE = True
+except ImportError:
+    logfire = None
+    LOGFIRE_AVAILABLE = False
+
 # Import langfuse conditionally to avoid breaking the system when not available
 try:
     from langfuse import Langfuse
@@ -24,8 +32,6 @@ except ImportError:
 # Load environment variables from .env file
 load_dotenv()
 
-logger = logging.getLogger(__name__)
-
 # Global Supabase client instance
 _supabase_client: Optional[Client] = None
 
@@ -34,6 +40,9 @@ _e2b_api_key: Optional[str] = None
 
 # Global Langfuse client instance
 _langfuse_client: Optional["Langfuse"] = None
+
+# Global Logfire configuration
+_logfire_configured: bool = False
 
 
 def get_supabase_client() -> Client:
@@ -70,11 +79,13 @@ def get_supabase_client() -> Client:
         # Create client
         _supabase_client = create_client(supabase_url, supabase_key)
 
-        logger.info("Supabase client initialized successfully")
+        if LOGFIRE_AVAILABLE:
+            logfire.info("Supabase client initialized successfully")
         return _supabase_client
 
     except Exception as e:
-        logger.error(f"Failed to initialize Supabase client: {str(e)}")
+        if LOGFIRE_AVAILABLE:
+            logfire.error(f"Failed to initialize Supabase client: {str(e)}")
         raise
 
 
@@ -85,7 +96,8 @@ def reset_supabase_client():
     """
     global _supabase_client
     _supabase_client = None
-    logger.info("Supabase client reset")
+    if LOGFIRE_AVAILABLE:
+        logfire.info("Supabase client reset")
 
 
 def get_e2b_api_key() -> str:
@@ -111,11 +123,13 @@ def get_e2b_api_key() -> str:
             raise ValueError("E2B_SANDBOX_API_KEY or E2B_API_KEY environment variable is required")
 
         _e2b_api_key = api_key
-        logger.info("E2B API key loaded successfully")
+        if LOGFIRE_AVAILABLE:
+            logfire.info("E2B API key loaded successfully")
         return _e2b_api_key
 
     except Exception as e:
-        logger.error(f"Failed to load E2B API key: {str(e)}")
+        if LOGFIRE_AVAILABLE:
+            logfire.error(f"Failed to load E2B API key: {str(e)}")
         raise
 
 
@@ -127,7 +141,8 @@ def reset_e2b_config():
     """
     global _e2b_api_key
     _e2b_api_key = None
-    logger.info("E2B configuration reset")
+    if LOGFIRE_AVAILABLE:
+        logfire.info("E2B configuration reset")
 
 
 def get_langfuse_client() -> Optional["Langfuse"]:
@@ -168,14 +183,17 @@ def get_langfuse_client() -> Optional["Langfuse"]:
 
         # Verify authentication
         if _langfuse_client.auth_check():
-            logger.info("Langfuse client initialized and authenticated successfully")
+            if LOGFIRE_AVAILABLE:
+                logfire.info("Langfuse client initialized and authenticated successfully")
         else:
-            logger.warning("Langfuse client initialized but authentication check failed")
+            if LOGFIRE_AVAILABLE:
+                logfire.warning("Langfuse client initialized but authentication check failed")
 
         return _langfuse_client
 
     except Exception as e:
-        logger.error(f"Failed to initialize Langfuse client: {str(e)}")
+        if LOGFIRE_AVAILABLE:
+            logfire.error(f"Failed to initialize Langfuse client: {str(e)}")
         raise
 
 
@@ -186,7 +204,8 @@ def reset_langfuse_client():
     """
     global _langfuse_client
     _langfuse_client = None
-    logger.info("Langfuse client reset")
+    if LOGFIRE_AVAILABLE:
+        logfire.info("Langfuse client reset")
 
 
 def get_prompt(prompt_name: str, version: Optional[int] = None, label: Optional[str] = None):
@@ -216,11 +235,13 @@ def get_prompt(prompt_name: str, version: Optional[int] = None, label: Optional[
         else:
             prompt = langfuse_client.get_prompt(prompt_name)
         
-        logger.info(f"Retrieved prompt '{prompt_name}' successfully")
+        if LOGFIRE_AVAILABLE:
+            logfire.info(f"Retrieved prompt '{prompt_name}' successfully")
         return prompt
 
     except Exception as e:
-        logger.error(f"Failed to retrieve prompt '{prompt_name}': {str(e)}")
+        if LOGFIRE_AVAILABLE:
+            logfire.error(f"Failed to retrieve prompt '{prompt_name}': {str(e)}")
         raise
 
 
@@ -360,14 +381,97 @@ def create_langfuse_config(state: dict, trace_name: str = "syllogic-agent-execut
         )
         
         if config:
-            logger.info(f"Created Langfuse tracing for user={user_id}, chat={chat_id}, dashboard={dashboard_id}")
+            if LOGFIRE_AVAILABLE:
+                logfire.info(f"Created Langfuse tracing for user={user_id}, chat={chat_id}, dashboard={dashboard_id}")
             
         return config
             
     except Exception as e:
-        logger.error(f"Error creating Langfuse config: {e}")
+        if LOGFIRE_AVAILABLE:
+            logfire.error(f"Error creating Langfuse config: {e}")
         return {}
 
+
+def configure_logfire() -> None:
+    """Configure Logfire for application-wide logging and observability.
+    
+    This function initializes Logfire with appropriate settings for the
+    syllogic agent system. Should be called once during application startup.
+    """
+    global _logfire_configured
+    
+    if not LOGFIRE_AVAILABLE:
+        return
+        
+    if _logfire_configured:
+        return
+        
+    try:
+        # Get Logfire token from environment
+        logfire_token = os.getenv("LOGFIRE_TOKEN")
+        
+        if not logfire_token:
+            # Logfire will work without token in development mode
+            logfire.configure(
+                service_name="syllogic-agent",
+                service_version="1.0.0",
+                environment=os.getenv("ENVIRONMENT", "development"),
+                send_to_logfire=False  # Don't send to cloud without token
+            )
+        else:
+            # Configure with token for cloud logging
+            logfire.configure(
+                service_name="syllogic-agent",
+                service_version="1.0.0",
+                environment=os.getenv("ENVIRONMENT", "development"),
+                token=logfire_token
+            )
+        
+        # Integrate with standard library logging
+        logging.basicConfig(
+            handlers=[logfire.LogfireLoggingHandler()],
+            level=logging.INFO
+        )
+        
+        _logfire_configured = True
+        logfire.info("Logfire configured successfully")
+        
+    except Exception as e:
+        # Fall back to standard logging if Logfire fails
+        logging.basicConfig(level=logging.INFO)
+        logging.getLogger(__name__).error(f"Failed to configure Logfire: {str(e)}")
+
+
+def get_logfire_logger(name: str = None):
+    """Get a logger instance that uses Logfire if available.
+    
+    Args:
+        name: Logger name (defaults to caller's module name)
+        
+    Returns:
+        Logger instance (Logfire if available, otherwise standard logging)
+    """
+    if LOGFIRE_AVAILABLE and _logfire_configured:
+        return logfire
+    else:
+        return logging.getLogger(name or __name__)
+
+
+def reset_logfire_config():
+    """Reset the global Logfire configuration.
+    
+    Useful for testing or when configuration changes.
+    """
+    global _logfire_configured
+    _logfire_configured = False
+
+
+# Initialize Logfire first (before other services)
+if LOGFIRE_AVAILABLE:
+    configure_logfire()
+
+# Get logger after Logfire configuration
+logger = get_logfire_logger(__name__)
 
 # Initialize client on module import
 try:
@@ -406,5 +510,9 @@ __all__ = [
     "get_langfuse_callback_handler",
     "get_langchain_config_with_tracing",
     "create_langfuse_config",
+    "configure_logfire",
+    "get_logfire_logger",
+    "reset_logfire_config",
     "LANGFUSE_AVAILABLE",
+    "LOGFIRE_AVAILABLE",
 ]

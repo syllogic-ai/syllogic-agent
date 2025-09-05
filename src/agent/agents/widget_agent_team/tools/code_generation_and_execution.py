@@ -17,7 +17,7 @@ from langgraph.types import Command
 from agent.models import ChartConfigSchema, WidgetAgentState
 from config import get_langfuse_callback_handler, LANGFUSE_AVAILABLE
 
-from actions.utils import get_chart_config_schema_string, analyze_schema_validation_error
+from actions.utils import get_chart_config_schema_string, analyze_schema_validation_error, analyze_pandas_execution_error
 from actions.e2b_sandbox import create_e2b_sandbox, execute_code_in_sandbox, kill_sandbox
 
 # Handle imports for different execution contexts
@@ -63,7 +63,23 @@ def generate_and_execute_python_code_tool(
         try:
             # Step 1: Prepare concurrent tasks for sandbox creation and code generation
             import logging
-            logger = logging.getLogger(__name__)
+            # Get logger that uses Logfire if available
+            try:
+                from config import get_logfire_logger
+                logger = get_logfire_logger(__name__)
+            except ImportError:
+                import sys
+                import os
+                # Add the src directory to the path if needed
+                src_path = os.path.join(os.path.dirname(__file__), '..', '..', '..', '..')
+                if src_path not in sys.path:
+                    sys.path.insert(0, src_path)
+                try:
+                    from config import get_logfire_logger
+                    logger = get_logfire_logger(__name__)
+                except ImportError:
+                    import logging
+                    logger = logging.getLogger(__name__)
             
             # Start timing for parallel execution verification
             workflow_start_time = time.time()
@@ -431,13 +447,16 @@ else:
             try:
                 main_result = await asyncio.to_thread(execute_code_in_sandbox, sandbox, generated_code, timeout=60.0)
                 if not main_result["success"]:
-                    error_msg = f"Python execution error: {main_result['error']}"
+                    execution_error = main_result['error']
+                    # Analyze the pandas/Python error and provide specific guidance
+                    error_guidance = analyze_pandas_execution_error(execution_error)
+                    error_msg = f"Python execution error: {execution_error}\n\n{error_guidance}"
                     # Kill sandbox before returning error (run in thread to avoid blocking)
                     if sandbox:
                         await asyncio.to_thread(kill_sandbox, sandbox)
                     return Command(
                         update={
-                            "code_execution_result": {"error": main_result['error']},
+                            "code_execution_result": {"error": execution_error, "guidance": error_guidance},
                             "error_messages": state.error_messages + [error_msg],
                             "messages": [ToolMessage(content=error_msg, tool_call_id=tool_call_id)],
                         }

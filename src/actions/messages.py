@@ -2,7 +2,6 @@
 Provides functions to create and manage individual chat messages.
 """
 
-import logging
 import uuid
 from datetime import datetime
 from typing import List, Optional
@@ -11,7 +10,13 @@ from supabase import Client
 
 from agent.models import Message, CreateMessageInput
 
-logger = logging.getLogger(__name__)
+# Get logger that uses Logfire if available
+try:
+    from config import get_logfire_logger
+    logger = get_logfire_logger(__name__)
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
 
 
 def create_message(supabase: Client, message_input: CreateMessageInput) -> Message:

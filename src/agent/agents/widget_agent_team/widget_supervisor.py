@@ -9,10 +9,10 @@ from langgraph.graph import END
 from langgraph.types import Command
 
 from agent.models import SupervisorDecision, WidgetAgentState
-from config import get_langfuse_callback_handler, LANGFUSE_AVAILABLE
 
 # Handle imports for different execution contexts
 try:
+    from config import get_langfuse_callback_handler, LANGFUSE_AVAILABLE
     from actions.prompts import compile_prompt, get_prompt_config
 except ImportError:
     import sys
@@ -21,6 +21,7 @@ except ImportError:
     src_path = os.path.join(os.path.dirname(__file__), '..', '..', '..')
     if src_path not in sys.path:
         sys.path.insert(0, src_path)
+    from config import get_langfuse_callback_handler, LANGFUSE_AVAILABLE
     from actions.prompts import compile_prompt, get_prompt_config
 
 
@@ -32,7 +33,23 @@ class WidgetSupervisor:
         # Fetch model configuration from Langfuse (REQUIRED)
         try:
             import logging
-            logger = logging.getLogger(__name__)
+            # Get logger that uses Logfire if available
+            try:
+                from config import get_logfire_logger
+                logger = get_logfire_logger(__name__)
+            except ImportError:
+                import sys
+                import os
+                # Add the src directory to the path if needed
+                src_path = os.path.join(os.path.dirname(__file__), '..', '..', '..')
+                if src_path not in sys.path:
+                    sys.path.insert(0, src_path)
+                try:
+                    from config import get_logfire_logger
+                    logger = get_logfire_logger(__name__)
+                except ImportError:
+                    import logging
+                    logger = logging.getLogger(__name__)
             
             logger.info("Fetching model configuration from Langfuse for create_routing_prompt...")
             prompt_config = get_prompt_config("widget_agent_team/widget_supervisor", label="latest")
@@ -221,7 +238,23 @@ class WidgetSupervisor:
         """Create comprehensive routing prompt for LLM supervisor from Langfuse."""
         try:
             import logging
-            logger = logging.getLogger(__name__)
+            # Get logger that uses Logfire if available
+            try:
+                from config import get_logfire_logger
+                logger = get_logfire_logger(__name__)
+            except ImportError:
+                import sys
+                import os
+                # Add the src directory to the path if needed
+                src_path = os.path.join(os.path.dirname(__file__), '..', '..', '..')
+                if src_path not in sys.path:
+                    sys.path.insert(0, src_path)
+                try:
+                    from config import get_logfire_logger
+                    logger = get_logfire_logger(__name__)
+                except ImportError:
+                    import logging
+                    logger = logging.getLogger(__name__)
             
             # Prepare runtime variables - link state_analysis with the Langfuse template
             prompt_variables = {

@@ -1,5 +1,4 @@
 import json
-import logging
 import os
 import sys
 from typing import Any, Callable, Dict, List, Optional
@@ -7,7 +6,13 @@ from typing import Any, Callable, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-logger = logging.getLogger(__name__)
+# Get logger that uses Logfire if available
+try:
+    from config import get_logfire_logger
+    logger = get_logfire_logger(__name__)
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
 
 
 # State reducers for LangGraph concurrent updates
@@ -504,3 +509,120 @@ def get_chart_config_schema_string():
   } // X-axis configuration
 }
 ```"""
+
+
+def analyze_pandas_execution_error(error_message: str) -> str:
+    """
+    Analyze pandas/Python execution errors and provide specific guidance for fixes.
+    
+    Args:
+        error_message: The error message from pandas execution
+        
+    Returns:
+        str: Specific guidance for fixing the error
+    """
+    if not error_message:
+        return "No error message provided"
+    
+    error_lower = error_message.lower()
+    
+    # Categorical fillna error - the specific issue we're fixing
+    if "cannot setitem on a categorical with a new category" in error_lower and "fillna" in error_lower:
+        return """
+CATEGORICAL FILLNA ERROR:
+The generated code is trying to fill NaN values in a pandas Categorical column with a value that's not in the allowed categories.
+
+SOLUTION:
+Instead of using fillna(0) on the entire DataFrame after creating Categorical columns, handle missing values BEFORE creating the Categorical:
+
+WRONG:
+```python
+agg["season"] = pd.Categorical(agg["season"], categories=season_order, ordered=True)
+agg = agg.sort_values("season").fillna(0)  # Error: 0 is not a valid category
+```
+
+CORRECT:
+```python
+# Fill missing values in season column before making it Categorical
+agg["season"] = agg["season"].fillna("Unknown")
+agg["season"] = pd.Categorical(agg["season"], categories=season_order, ordered=True)
+agg = agg.sort_values("season")
+
+# For numeric columns, fill separately
+numeric_cols = agg.select_dtypes(include=[np.number]).columns
+agg[numeric_cols] = agg[numeric_cols].fillna(0)
+```
+
+OR use .astype('category') after handling NaNs:
+```python
+agg = agg.fillna({"season": "Unknown"})  # Fill specific columns first
+agg["season"] = agg["season"].astype('category').cat.reorder_categories(season_order)
+```
+"""
+    
+    # Other common pandas errors
+    elif "keyerror" in error_lower and ("column" in error_lower or "key" in error_lower):
+        return """
+COLUMN NOT FOUND ERROR:
+The code is trying to access a column that doesn't exist in the DataFrame.
+
+SOLUTION:
+1. Check the exact column names with: print(df.columns.tolist())
+2. Use bracket notation for columns with spaces: df["Column Name"]  
+3. Check for case sensitivity and extra spaces
+4. Use df.rename() if columns need to be standardized
+"""
+    
+    elif "settingwithcopywarning" in error_lower:
+        return """
+SETTINGWITHCOPYWARNING:
+Pandas is warning about potential issues with chained assignments.
+
+SOLUTION:
+Use .copy() when creating new DataFrames:
+```python
+filtered_df = df[df['condition']].copy()
+filtered_df['new_column'] = values
+```
+"""
+    
+    elif "cannot convert" in error_lower and ("datetime" in error_lower or "date" in error_lower):
+        return """
+DATETIME CONVERSION ERROR:
+The code is having trouble converting strings to datetime objects.
+
+SOLUTION:
+Use pd.to_datetime() with error handling:
+```python
+df['date_column'] = pd.to_datetime(df['date_column'], errors='coerce')
+```
+Or specify the date format:
+```python
+df['date_column'] = pd.to_datetime(df['date_column'], format='%Y-%m-%d %H:%M:%S')
+```
+"""
+    
+    elif "empty dataframe" in error_lower or "no data" in error_lower:
+        return """
+EMPTY DATAFRAME ERROR:
+The DataFrame appears to be empty or contains no valid data.
+
+SOLUTION:
+1. Add data validation: if df.empty: return error
+2. Check for proper column names and data types
+3. Verify file loading worked correctly
+4. Add fallback data or error handling
+"""
+    
+    else:
+        return f"""
+GENERAL EXECUTION ERROR:
+An error occurred during code execution: {error_message[:200]}{'...' if len(error_message) > 200 else ''}
+
+GENERAL SOLUTIONS:
+1. Check column names and data types: print(df.dtypes)
+2. Verify data is not empty: print(df.shape)
+3. Handle missing values appropriately
+4. Use proper pandas syntax and methods
+5. Add error handling for edge cases
+"""

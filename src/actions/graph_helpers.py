@@ -4,14 +4,19 @@ This module contains business logic that was moved from graph.py to follow
 CLAUDE.md guidelines. The graph.py should only contain graph structure definition.
 """
 
-import logging
 import uuid
 from datetime import datetime
 from typing import Dict, Any, List
 
 from langgraph.types import Command
 
-logger = logging.getLogger(__name__)
+# Get logger that uses Logfire if available
+try:
+    from config import get_logfire_logger
+    logger = get_logfire_logger(__name__)
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
 
 
 def should_delegate_to_widget_team(state):

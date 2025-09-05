@@ -1,12 +1,17 @@
 """Task management tools for the Top Level Supervisor."""
 
-import logging
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 
 from agent.models import DelegatedTask, TopLevelSupervisorState
 
-logger = logging.getLogger(__name__)
+# Get logger that uses Logfire if available
+try:
+    from config import get_logfire_logger
+    logger = get_logfire_logger(__name__)
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
 
 
 def create_task(

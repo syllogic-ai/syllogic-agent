@@ -253,19 +253,17 @@ class TestCreateWidget:
             widget_type="chart",
             config={"chart_type": "bar"},
             data={"data": "test"},
-            sql="SELECT * FROM table",
-            layout={"x": 0, "y": 0},
             chat_id="chat-123",
             order=1,
+            summary="Test widget summary",
         )
         create_widget(widget_input)
 
         insert_call = mock_supabase.table().insert.call_args[0][0]
         assert insert_call["data"] == {"data": "test"}
-        assert insert_call["sql"] == "SELECT * FROM table"
-        assert insert_call["layout"] == {"x": 0, "y": 0}
         assert insert_call["chat_id"] == "chat-123"
         assert insert_call["order"] == 1
+        assert insert_call["summary"] == "Test widget summary"
 
     @patch("actions.dashboard._get_supabase_client")
     def test_create_widget_insert_fails(self, mock_get_supabase_client):

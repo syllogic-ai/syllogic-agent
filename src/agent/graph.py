@@ -11,14 +11,19 @@ All business logic has been moved to appropriate helper modules in src/actions/.
 from __future__ import annotations
 
 import os
-import logging
 
 # Import reducers directly from utils file to avoid dependency issues
 import sys
 from datetime import datetime
 from typing import Annotated, Sequence, TypedDict, List, Optional
 
-logger = logging.getLogger(__name__)
+# Get logger that uses Logfire if available
+try:
+    from config import get_logfire_logger
+    logger = get_logfire_logger(__name__)
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
 
 from langchain_core.messages import BaseMessage
 from langgraph.graph import START, END, StateGraph

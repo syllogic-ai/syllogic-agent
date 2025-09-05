@@ -1,9 +1,14 @@
 """Tool for fetching widget data from the database for reference purposes."""
 
-import logging
 from typing import Any, Dict, Optional
 
-logger = logging.getLogger(__name__)
+# Get logger that uses Logfire if available
+try:
+    from config import get_logfire_logger
+    logger = get_logfire_logger(__name__)
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
 
 # Handle imports for different execution contexts
 try:

@@ -4,7 +4,6 @@ This module provides helper functions for managing prompts through Langfuse,
 including retrieving, compiling, and managing prompt versions.
 """
 
-import logging
 from typing import Any, Dict, Optional
 
 # Handle imports for different execution contexts
@@ -19,7 +18,13 @@ except ImportError:
         sys.path.insert(0, src_path)
     from config import get_langfuse_client, get_prompt
 
-logger = logging.getLogger(__name__)
+# Get logger that uses Logfire if available
+try:
+    from config import get_logfire_logger
+    logger = get_logfire_logger(__name__)
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
 
 
 def retrieve_prompt(
@@ -73,18 +78,16 @@ def compile_prompt(prompt_name: str, variables: Dict[str, Any], **kwargs) -> str
         raise
 
 
-def get_prompt_config(prompt_name: str, **kwargs) -> Dict[str, Any]:
-    """Get the configuration object for a prompt.
+def get_prompt_config(prompt_name: str, default_config: Optional[Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]:
+    """Get the configuration object for a prompt with fallback to default config.
 
     Args:
         prompt_name: Name of the prompt to retrieve
+        default_config: Default configuration to use if prompt retrieval fails
         **kwargs: Additional arguments for prompt retrieval (version, label)
 
     Returns:
         Dictionary containing the prompt's configuration (model, temperature, etc.)
-
-    Raises:
-        Exception: If prompt retrieval fails
     """
     try:
         prompt = retrieve_prompt(prompt_name, **kwargs)
@@ -94,8 +97,11 @@ def get_prompt_config(prompt_name: str, **kwargs) -> Dict[str, Any]:
         return config
         
     except Exception as e:
-        logger.error(f"Failed to get config for prompt '{prompt_name}': {str(e)}")
-        raise
+        logger.warning(f"Failed to get config for prompt '{prompt_name}', using default config: {str(e)}")
+        return default_config or {
+            "model": "gpt-4o-mini",
+            "temperature": 0.3
+        }
 
 
 def create_prompt(

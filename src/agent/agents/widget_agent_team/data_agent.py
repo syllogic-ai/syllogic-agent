@@ -35,7 +35,23 @@ class DataAgent:
         # Fetch model configuration and prompts from Langfuse (REQUIRED)
         try:
             import logging
-            logger = logging.getLogger(__name__)
+            # Get logger that uses Logfire if available
+            try:
+                from config import get_logfire_logger
+                logger = get_logfire_logger(__name__)
+            except ImportError:
+                import sys
+                import os
+                # Add the src directory to the path if needed
+                src_path = os.path.join(os.path.dirname(__file__), '..', '..', '..')
+                if src_path not in sys.path:
+                    sys.path.insert(0, src_path)
+                try:
+                    from config import get_logfire_logger
+                    logger = get_logfire_logger(__name__)
+                except ImportError:
+                    import logging
+                    logger = logging.getLogger(__name__)
             
             # Fetch main data processing prompt configuration
             logger.info("Fetching model configuration from Langfuse for data_agent...")

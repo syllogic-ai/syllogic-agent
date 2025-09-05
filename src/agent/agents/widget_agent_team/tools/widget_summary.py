@@ -1,13 +1,18 @@
 """Widget summary generation tool for creating VLLM-friendly widget descriptions."""
 
 import json
-import logging
 from typing import Dict, Any
 
 from langchain_openai import ChatOpenAI
 from actions.prompts import get_prompt_with_fallback, get_prompt_config
 
-logger = logging.getLogger(__name__)
+# Get logger that uses Logfire if available
+try:
+    from config import get_logfire_logger
+    logger = get_logfire_logger(__name__)
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
 
 
 def generate_widget_summary(
@@ -74,13 +79,17 @@ Keep it concise but informative for someone who cannot see the dashboard."""
             dynamic_variables
         )
         
-        # Get model configuration from Langfuse
+        # Get model configuration from Langfuse with fallback defaults
+        default_config = {
+            "model": "gpt-4o-mini",
+            "temperature": 0.3
+        }
+        prompt_config = get_prompt_config("widget-summary-generation", default_config)
+        model_name = prompt_config.get("model", "gpt-4o-mini")
+        temperature = prompt_config.get("temperature", 0.3)
+        reasoning_effort = prompt_config.get("reasoning_effort")
+        
         try:
-            prompt_config = get_prompt_config("widget-summary-generation")
-            model_name = prompt_config.get("model", "gpt-4o-mini")  # Default model
-            temperature = prompt_config.get("temperature", 0.3)  # Low temperature for consistent summaries
-            reasoning_effort = prompt_config.get("reasoning_effort")
-            
             # Initialize LLM with Langfuse configuration
             llm_params = {
                 "model": model_name,

@@ -5,13 +5,18 @@ All database logic is in actions.dashboard helper functions.
 """
 
 import json
-import logging
 from typing import Dict, Any, List
 from langchain_core.tools import tool
 
 from actions.dashboard import fetch_reference_widget_details, fetch_multiple_reference_widget_details
 
-logger = logging.getLogger(__name__)
+# Get logger that uses Logfire if available
+try:
+    from config import get_logfire_logger
+    logger = get_logfire_logger(__name__)
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
 
 
 @tool

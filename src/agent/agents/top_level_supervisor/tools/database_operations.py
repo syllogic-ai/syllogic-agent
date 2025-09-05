@@ -4,7 +4,6 @@ Following CLAUDE.md guidelines, this module contains ONLY agent tools that wrap
 helper functions from src/actions/. All actual database logic is in src/actions/.
 """
 
-import logging
 from typing import Dict, Any, List
 from datetime import datetime
 
@@ -18,7 +17,13 @@ from agent.models import TopLevelSupervisorState
 from actions.dashboard import update_widgets_configuration_status, update_widgets_order_and_configuration
 from actions.widget_ordering import analyze_and_order_dashboard_widgets
 
-logger = logging.getLogger(__name__)
+# Get logger that uses Logfire if available
+try:
+    from config import get_logfire_logger
+    logger = get_logfire_logger(__name__)
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
 
 
 @tool

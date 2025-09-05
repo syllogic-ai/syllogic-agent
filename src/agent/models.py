@@ -25,6 +25,7 @@ class CreateWidgetInput(BaseModel):
     summary: Optional[str] = Field(
         default=None, description="Brief VLLM-friendly widget summary"
     )
+    chat_id: Optional[str] = Field(default=None, description="Chat ID that created this widget")
     is_configured: Optional[bool] = Field(
         default=None, description="Configuration status"
     )
@@ -41,11 +42,12 @@ class UpdateWidgetInput(BaseModel):
     )
     data: Optional[Dict[str, Any]] = Field(default=None, description="Widget data")
     order: Optional[int] = Field(default=None, description="Order for positioning")
-    is_configured: Optional[bool] = Field(
-        default=None, description="Configuration status"
-    )
     summary: Optional[str] = Field(
         default=None, description="Brief VLLM-friendly widget summary"
+    )
+    chat_id: Optional[str] = Field(default=None, description="Chat ID that created this widget")
+    is_configured: Optional[bool] = Field(
+        default=None, description="Configuration status"
     )
 
 

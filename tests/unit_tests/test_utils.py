@@ -19,7 +19,53 @@ from actions.utils import (
     convert_data_to_chart_data_1d,
     convert_value,
     remove_null_pairs,
+    analyze_pandas_execution_error,
 )
+
+
+class TestAnalyzePandasExecutionError:
+    """Test cases for analyze_pandas_execution_error function."""
+
+    def test_categorical_fillna_error(self):
+        """Test analyzing pandas categorical fillna error."""
+        error_message = "TypeError: Cannot setitem on a Categorical with a new category (0), set the categories first. Error occurred during fillna operation."
+        result = analyze_pandas_execution_error(error_message)
+        
+        assert "CATEGORICAL FILLNA ERROR:" in result
+        assert "fillna(0)" in result
+        assert "WRONG:" in result
+        assert "CORRECT:" in result
+        assert "pd.Categorical" in result
+
+    def test_column_not_found_error(self):
+        """Test analyzing keyerror for missing column."""
+        error_message = "KeyError: 'column_name'"
+        result = analyze_pandas_execution_error(error_message)
+        
+        assert "COLUMN NOT FOUND ERROR:" in result
+        assert "print(df.columns.tolist())" in result
+
+    def test_datetime_conversion_error(self):
+        """Test analyzing datetime conversion errors."""
+        error_message = "ValueError: Cannot convert datetime"
+        result = analyze_pandas_execution_error(error_message)
+        
+        assert "DATETIME CONVERSION ERROR:" in result
+        assert "pd.to_datetime" in result
+
+    def test_empty_error_message(self):
+        """Test handling empty error message."""
+        result = analyze_pandas_execution_error("")
+        
+        assert result == "No error message provided"
+
+    def test_general_error(self):
+        """Test handling unspecific errors."""
+        error_message = "Some random error occurred"
+        result = analyze_pandas_execution_error(error_message)
+        
+        assert "GENERAL EXECUTION ERROR:" in result
+        assert "Some random error occurred" in result
 
 
 class TestConvertDataToChartData1d:

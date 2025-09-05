@@ -2,7 +2,6 @@
 Provides functions to create, update, and manage job statuses.
 """
 
-import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -10,7 +9,13 @@ from supabase import Client
 
 from agent.models import CreateJobInput, Job, UpdateJobInput
 
-logger = logging.getLogger(__name__)
+# Get logger that uses Logfire if available
+try:
+    from config import get_logfire_logger
+    logger = get_logfire_logger(__name__)
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
 
 
 def create_job(supabase: Client, job_input: CreateJobInput) -> Job:

@@ -8,7 +8,9 @@
       "Bash(make test:*)",
       "Bash(make lint:*)",
       "mcp__context7__resolve-library-id",
-      "mcp__context7__get-library-docs"
+      "mcp__context7__get-library-docs",
+      "Bash(make:*)",
+      "Bash(PYTHONPATH=src python:*)"
     ],
     "deny": [],
     "ask": []

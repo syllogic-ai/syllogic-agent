@@ -4,7 +4,6 @@ This supervisor orchestrates tasks across all specialized agent teams,
 analyzes user requests, reads available data, and delegates appropriate tasks.
 """
 
-import logging
 import uuid
 from datetime import datetime
 from typing import Dict, Any, List, Optional
@@ -40,7 +39,13 @@ except ImportError:
         sys.path.insert(0, src_path)
     from actions.prompts import retrieve_prompt, get_prompt_config, get_prompt_with_fallback
 
-logger = logging.getLogger(__name__)
+# Get logger that uses Logfire if available
+try:
+    from config import get_logfire_logger
+    logger = get_logfire_logger(__name__)
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
 
 
 @tool
@@ -358,7 +363,9 @@ def plan_widget_tasks(
 
 def _generate_task_status_report(
     state: TopLevelSupervisorState, 
-    tool_call_id: str
+    tool_call_id: str,
+    updated_dependencies: Optional[List] = None,
+    updated_tasks: Optional[List] = None
 ) -> Command:
     """Helper function to generate task status report (consolidated from check_task_status)."""
     if not state.delegated_tasks:
@@ -408,12 +415,19 @@ def _generate_task_status_report(
     
     status_message = "\n".join(status_report)
     
-    return Command(
-        update={
-            "all_tasks_completed": all_completed,
-            "messages": [ToolMessage(content=status_message, tool_call_id=tool_call_id)],
-        }
-    )
+    # Build update with resolved dependencies and tasks if provided
+    update_data = {
+        "all_tasks_completed": all_completed,
+        "messages": [ToolMessage(content=status_message, tool_call_id=tool_call_id)],
+    }
+    
+    # Include updated dependencies and tasks if they were provided
+    if updated_dependencies is not None:
+        update_data["task_dependencies"] = updated_dependencies
+    if updated_tasks is not None:
+        update_data["delegated_tasks"] = updated_tasks
+    
+    return Command(update=update_data)
 
 
 
@@ -426,24 +440,13 @@ def execute_widget_tasks(
 ) -> Command:
     """Execute pending widget tasks OR check task status (consolidated functionality)."""
     try:
-        # If check_only is True, just return status report
-        if check_only:
-            return _generate_task_status_report(state, tool_call_id)
-        
         # Find pending widget tasks
         pending_tasks = [
             task for task in state.delegated_tasks 
             if task.target_agent == "widget_agent_team" and task.task_status == "pending"
         ]
         
-        if not pending_tasks:
-            message = "No pending widget tasks to execute"
-            return Command(
-                update={
-                    "messages": [ToolMessage(content=message, tool_call_id=tool_call_id)],
-                }
-            )
-        
+        # IMPORTANT: Always do dependency resolution, even for status checks
         # NEW: Proper dependency resolution using task_dependencies tracking
         updated_dependencies = []  # Create new list to avoid mutating original
         updated_tasks = state.delegated_tasks.copy()  # Create copy for task updates
@@ -534,6 +537,10 @@ def execute_widget_tasks(
                     logger.info(f"✅ Task {task.task_id} ({task.widget_type}) ready - all dependencies resolved")
             
             ready_tasks.append(task)
+        
+        # If check_only is True, return status report after dependency resolution
+        if check_only:
+            return _generate_task_status_report(state, tool_call_id, updated_dependencies, updated_tasks)
         
         if not ready_tasks:
             if blocked_tasks:

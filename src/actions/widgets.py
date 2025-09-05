@@ -4,13 +4,18 @@ This module provides utilities for CRUD operations on widgets,
 including fetching widget configurations and details by ID.
 """
 
-import logging
 from typing import Optional, Dict, Any
 from datetime import datetime
 
 from config import get_supabase_client
 
-logger = logging.getLogger(__name__)
+# Get logger that uses Logfire if available
+try:
+    from config import get_logfire_logger
+    logger = get_logfire_logger(__name__)
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
 
 
 def get_widget_by_id(widget_id: str) -> Optional[Dict[str, Any]]:

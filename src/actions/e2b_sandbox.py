@@ -1,13 +1,18 @@
 """E2B sandbox management helper functions."""
 
-import logging
 from typing import Optional, Dict, Any, List, Union
 import asyncio
 from contextlib import asynccontextmanager
 
 from config import get_e2b_api_key
 
-logger = logging.getLogger(__name__)
+# Get logger that uses Logfire if available
+try:
+    from config import get_logfire_logger
+    logger = get_logfire_logger(__name__)
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
 
 
 def _extract_log_messages(log_list) -> List[str]:
