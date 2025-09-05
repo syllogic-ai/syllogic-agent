@@ -153,13 +153,24 @@ def plan_widget_tasks(
             if not planning_prompt:
                 raise ValueError("Compiled prompt from Langfuse is empty or None")
             
-            # Convert to string if needed and validate
-            planning_prompt_str = str(planning_prompt)
-            if not planning_prompt_str or len(planning_prompt_str.strip()) == 0:
+            # Handle chat message format from Langfuse
+            if isinstance(planning_prompt, list) and len(planning_prompt) > 0:
+                # Extract content from chat message format
+                first_message = planning_prompt[0]
+                if isinstance(first_message, dict) and 'content' in first_message:
+                    planning_prompt_content = first_message['content']
+                else:
+                    planning_prompt_content = str(first_message)
+            else:
+                planning_prompt_content = str(planning_prompt)
+            
+            if not planning_prompt_content or len(planning_prompt_content.strip()) == 0:
                 raise ValueError("Compiled prompt from Langfuse is empty or invalid")
             
-            # Use the string version for the LLM
-            planning_prompt = planning_prompt_str
+            # Use the extracted content for the LLM
+            planning_prompt = planning_prompt_content
+            
+            logger.info(f"✅ Extracted planning prompt content: {len(planning_prompt_content)} characters")
             
             logger.info(f"✅ Successfully compiled Langfuse planning prompt with {len(prompt_variables)} variables")
             

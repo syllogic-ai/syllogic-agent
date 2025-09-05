@@ -612,3 +612,32 @@ class TopLevelSupervisorState(BaseModel):
     class Config:
         arbitrary_types_allowed = True
         use_enum_values = True
+
+
+class WidgetOrder(BaseModel):
+    """Individual widget order specification for bulk operations."""
+    id: str = Field(description="Widget ID to update")
+    order: int = Field(description="New order position (1-based indexing)", ge=1)
+
+class WidgetOrderingSchema(BaseModel):
+    """Structured output schema for widget ordering decisions optimized for bulk updates."""
+    
+    reasoning: str = Field(
+        description="Brief explanation (2-3 sentences) of the ordering strategy and rationale"
+    )
+    widget_orders: List[WidgetOrder] = Field(
+        description="List of widgets with their assigned order numbers, optimized for bulk database updates"
+    )
+    
+    class Config:
+        extra = "forbid"
+        json_schema_extra = {
+            "example": {
+                "reasoning": "Placed text block before referenced chart for context. Grouped related metrics at top for better user flow.",
+                "widget_orders": [
+                    {"id": "widget-abc123", "order": 1},
+                    {"id": "widget-def456", "order": 2},
+                    {"id": "widget-ghi789", "order": 3}
+                ]
+            }
+        }

@@ -6,7 +6,9 @@
       "mcp__langfuse_1__get-prompt",
       "Bash(python:*)",
       "Bash(make test:*)",
-      "Bash(make lint:*)"
+      "Bash(make lint:*)",
+      "mcp__context7__resolve-library-id",
+      "mcp__context7__get-library-docs"
     ],
     "deny": [],
     "ask": []

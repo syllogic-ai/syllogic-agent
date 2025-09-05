@@ -24,6 +24,11 @@ This document provides a comprehensive analysis of the multi-agent system built 
 - **NumPy (>=1.24.0)**: Numerical computing
 - **Supabase (>=2.0.0)**: Database operations and file storage
 
+### Smart Widget Ordering
+- **LLM-based Analysis**: Intelligent widget placement using Langfuse prompts
+- **Structured Output**: Pydantic schemas for reliable bulk database updates
+- **Text-Chart Pairing**: Cohesive narrative flow with explanatory text before charts
+
 ### Development and Configuration
 - **Python-dotenv (>=1.0.1)**: Environment variable management
 - **Requests (>=2.28.0)**: HTTP client for external API calls
@@ -40,6 +45,7 @@ The system follows a **Hierarchical Supervisor Pattern** with two main levels, s
 **Code Organization** (Following CLAUDE.md):
 - **Graph Definition**: `src/agent/graph.py` - ONLY graph structure, no business logic
 - **Helper Functions**: `src/actions/` - ALL utility functions centralized here
+- **Widget Ordering**: `src/actions/widget_ordering.py` - LLM-based smart ordering system
 - **Agent Tools**: `src/agent/agents/{team}/tools/` - ONLY agent-specific tools, NO helper functions
 - **Configuration**: `src/config.py` - ALL environment variables and clients
 
@@ -172,9 +178,12 @@ START → widget_supervisor → [data|validate_data|db_operations_node|text_bloc
   - Updates task status and captures results
 
 - **`finalize_created_widgets`**:
-  - **Agent Tool**: Wraps `update_widgets_configuration_status()` from `actions.dashboard`
-  - Finalizes widgets created by completed tasks
-  - Marks widgets as configured (live)
+  - **Agent Tool**: Integrates smart widget ordering with configuration finalization
+  - **Smart Ordering**: Uses LLM analysis via `analyze_and_order_dashboard_widgets()` from `actions.widget_ordering`
+  - **Text-Chart Pairing**: Creates cohesive narrative flow where text blocks precede related charts
+  - **Fallback Strategy**: Falls back to sequential ordering if LLM ordering fails
+  - **Bulk Operations**: Uses `update_widgets_order_and_configuration()` for efficient database updates
+  - **Langfuse Integration**: Dynamic prompts with structured output for reliable ordering decisions
 
 - **`finalize_response`**: 
   - Generates final response to user
@@ -269,10 +278,13 @@ class DataValidationResult:
 - **UPDATE**: Updates existing widget with `UpdateWidgetInput` 
 - **DELETE**: Removes widget by ID
 
-**Integration**: Uses helper functions from `actions.dashboard`:
+**Integration**: Uses helper functions from `actions.dashboard` and `actions.widget_ordering`:
 - `create_widget()` - Helper function for widget creation
 - `update_widget()` - Helper function for widget updates
 - `delete_widget()` - Helper function for widget deletion
+- `get_dashboard_widgets_for_ordering()` - Fetches widgets for smart ordering analysis
+- `update_widgets_order_and_configuration()` - Bulk updates for widget ordering and configuration
+- `analyze_and_order_dashboard_widgets()` - LLM-based intelligent widget placement system
 
 **Code Organization Compliance**:
 - ✅ Database agent logic in `src/agent/agents/widget_agent_team/`
@@ -312,6 +324,14 @@ The system supports 8 widget types:
 widget_type ∈ ["line", "bar", "pie", "area", "radial", "kpi", "table", "text"]
 ```
 
+### Smart Widget Ordering
+The system now includes intelligent widget placement that:
+- **Analyzes Relationships**: Uses LLM to understand content relationships between widgets
+- **Creates Narrative Flow**: Places explanatory text blocks immediately before their related charts
+- **Avoids Grouping**: Prevents poor UX patterns like "all charts first, then all text"
+- **Uses Structured Output**: `WidgetOrderingSchema` with `WidgetOrder` objects for reliable bulk updates
+- **Langfuse Integration**: Dynamic prompts with variable substitution for consistent ordering decisions
+
 ### Operations
 Three core operations are supported:
 ```python
@@ -343,6 +363,12 @@ operation ∈ ["CREATE", "UPDATE", "DELETE"]
    ```
    task_status: "pending" → "in_progress" → "completed"
    widget_creation_completed: false → true
+   ```
+
+6. **Smart Widget Ordering** (Added in finalize_created_widgets):
+   ```
+   finalize_created_widgets → analyze_and_order_dashboard_widgets
+                           → LLM analysis → bulk database update
    ```
 
 #### Example 2: Text Block Creation Flow
@@ -423,6 +449,8 @@ This enables:
 - **Langfuse Integration**: Dynamic prompt compilation via `src/config.py`
 - **Model Configuration**: Centralized LLM settings in `src/config.py`
 - **Graph Business Logic**: Moved to `src/actions/graph_helpers.py`
+- **Smart Ordering**: Widget ordering logic centralized in `src/actions/widget_ordering.py`
+- **Prompt Management**: Widget ordering prompts managed via `src/actions/prompts.py`
 
 ### Error Handling Strategy
 - **Retry Logic**: Tool-specific failure counts and limits
@@ -448,6 +476,106 @@ This enables:
 - Dynamic workflow adaptation based on context
 
 This architecture provides a robust, scalable foundation for multi-agent dashboard widget creation with clear separation of concerns, type safety, and comprehensive error handling.
+
+## Smart Widget Ordering System
+
+### Overview
+The system now includes an intelligent widget ordering capability that creates cohesive dashboard narratives by analyzing widget relationships and placing explanatory text blocks immediately before their related charts.
+
+### Architecture Components
+
+#### Core Module: `src/actions/widget_ordering.py`
+- **`analyze_and_order_dashboard_widgets()`**: Main orchestration function
+- **`_get_llm_widget_ordering()`**: LLM analysis with Langfuse integration
+- **`_apply_widget_ordering()`**: Bulk database updates
+
+#### Data Models: `src/agent/models.py`
+```python
+class WidgetOrder(BaseModel):
+    """Individual widget order specification for bulk operations."""
+    id: str = Field(description="Widget ID to update")
+    order: int = Field(description="New order position (1-based indexing)", ge=1)
+
+class WidgetOrderingSchema(BaseModel):
+    """Structured output schema for widget ordering decisions."""
+    reasoning: str = Field(description="Brief explanation of ordering strategy")
+    widget_orders: List[WidgetOrder] = Field(description="List of widgets with order numbers")
+```
+
+#### Database Operations: `src/actions/dashboard.py`
+- **`get_dashboard_widgets_for_ordering()`**: Fetches widgets with required columns (id, type, order, summary)
+- **`update_widgets_order_and_configuration()`**: Bulk updates for widget ordering and configuration
+
+### LLM-Based Analysis Process
+
+1. **Data Preparation**: Fetches existing and new widgets with minimal required data
+2. **Langfuse Integration**: Retrieves dynamic prompts with variable substitution
+3. **LLM Analysis**: Uses structured output to analyze widget relationships and create ordering strategy
+4. **Bulk Operations**: Applies recommendations via efficient database bulk updates
+5. **Fallback Strategy**: Falls back to sequential ordering if LLM analysis fails
+
+### Text-Chart Narrative Pairing
+
+The system emphasizes creating **cohesive narrative flow** by:
+- **Analyzing Content Relationships**: Using widget summaries to identify explanatory text blocks
+- **Sequential Placement**: Placing text blocks immediately before their related charts
+- **Avoiding Poor Patterns**: Preventing "all charts first, then all text" layouts
+- **Story-like Flow**: Creating dashboards that read like coherent narratives
+
+### Integration Points
+
+#### Finalize Created Widgets Tool
+The smart ordering is integrated into the `finalize_created_widgets` tool:
+```python
+# Primary: Smart LLM-based ordering
+result = analyze_and_order_dashboard_widgets(
+    dashboard_id=dashboard_id,
+    new_widget_ids=widget_ids,
+    chat_id=chat_id,
+    user_id=user_id
+)
+
+# Fallback: Sequential ordering if LLM fails
+if not result["success"]:
+    fallback_result = update_widgets_configuration_status(
+        widget_ids, sequential_order=True
+    )
+```
+
+#### Langfuse Prompt Management
+- **Dynamic Prompts**: Stored in Langfuse at `top_level_supervisor/tools/widget_ordering`
+- **Variable Substitution**: Uses {{dashboard_id}}, {{existing_widgets}}, {{new_widgets}} etc.
+- **Model Configuration**: Temperature, reasoning effort, and model settings from Langfuse
+- **Structured Output**: Enforced via Pydantic schemas for reliable parsing
+
+### Error Handling and Reliability
+
+#### Multi-Level Fallbacks
+1. **Primary**: LLM-based smart ordering with relationship analysis
+2. **Secondary**: Sequential ordering with configuration updates
+3. **Tertiary**: Basic configuration updates without ordering changes
+
+#### Robust Error Recovery
+- **SQL Syntax Protection**: Fixed column alias issues in database queries
+- **Data Transformation**: Handles database schema differences (type vs widget_type)
+- **Langfuse Format Handling**: Properly extracts content from chat message formats
+- **Comprehensive Logging**: Detailed debug information for troubleshooting
+
+### Performance Optimizations
+
+#### Efficient Database Operations
+- **Minimal Data Fetching**: Only retrieves required columns (id, type, order, summary)
+- **Bulk Updates**: Single transaction for multiple widget order updates
+- **Individual Updates**: Safer than upsert for existing widget modifications
+- **Optimized Queries**: Uses proper column aliases and indexes
+
+#### LLM Efficiency
+- **Structured Output**: Reduces parsing overhead and improves reliability
+- **Focused Prompts**: Specific instructions for text-chart pairing requirements
+- **Model Configuration**: Optimized temperature and reasoning settings
+- **Variable Substitution**: Efficient prompt compilation with dynamic data
+
+This smart ordering system transforms the dashboard creation experience from basic widget placement to intelligent narrative construction, ensuring users receive dashboards that tell coherent, easy-to-follow stories through their data visualizations.
 
 ## CLAUDE.md Compliance
 
@@ -477,14 +605,18 @@ This architecture has been fully refactored to comply with the CLAUDE.md guideli
 src/
 ├── actions/                    # ✅ ALL helper functions centralized
 │   ├── dashboard.py           # ✅ Data & widget operations
+│   ├── widget_ordering.py     # ✅ NEW: LLM-based smart widget ordering
+│   ├── prompts.py            # ✅ Langfuse prompt management
 │   ├── graph_helpers.py       # ✅ Business logic from graph.py
 │   ├── database_operations.py # ✅ Database helpers
 │   └── ...
 ├── agent/
 │   ├── graph.py              # ✅ ONLY graph structure, no business logic
+│   ├── models.py             # ✅ NEW: WidgetOrderingSchema, WidgetOrder
 │   └── agents/
 │       ├── top_level_supervisor/
-│       │   ├── tools/        # ✅ ONLY agent tools (wrap helpers)
+│       │   ├── tools/
+│       │   │   └── database_operations.py  # ✅ UPDATED: Smart ordering integration
 │       │   └── ...
 │       └── widget_agent_team/
 │           ├── tools/        # ✅ ONLY agent tools (wrap helpers)
@@ -499,5 +631,11 @@ src/
 3. **Centralized Langfuse configuration** in `config.py`
 4. **Eliminated duplicate database operations** between agent tools and actions
 5. **Updated all agent tools** to wrap helper functions instead of containing business logic
+6. **Added smart widget ordering system** in `actions.widget_ordering.py`:
+   - LLM-based analysis for optimal widget placement
+   - Text-chart narrative pairing to avoid poor UX patterns
+   - Structured output with `WidgetOrderingSchema` for reliable database updates
+   - Langfuse integration for dynamic prompt management
+   - Fallback mechanisms for graceful error handling
 
 This ensures the architecture is maintainable, testable, and follows the strict separation of concerns mandated by CLAUDE.md guidelines.

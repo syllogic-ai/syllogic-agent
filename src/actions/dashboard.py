@@ -14,35 +14,41 @@ import requests
 from supabase import Client
 
 from agent.models import CreateWidgetInput, UpdateWidgetInput, Widget
+
+
 # Import config using the robust import utility to avoid circular dependencies
 def _get_supabase_client():
     """Get Supabase client using robust import."""
     try:
         # Try direct import first
         from config import get_supabase_client
+
         return get_supabase_client()
     except ImportError:
         # Fallback to robust import from utils
         from .utils import import_config
+
         config_module = import_config()
         return config_module.get_supabase_client()
+
 
 logger = logging.getLogger(__name__)
 
 ## Dashboard Data Analysis
 
+
 def get_available_data(dashboard_id: str) -> Dict[str, any]:
     """Get available data files and their schemas for a dashboard.
-    
+
     Args:
         dashboard_id: Dashboard identifier
-        
+
     Returns:
         Dict containing available files, schemas, and summary
     """
     try:
         supabase = _get_supabase_client()
-        
+
         # Get all files associated with this dashboard
         response = (
             supabase.table("files")
@@ -50,55 +56,59 @@ def get_available_data(dashboard_id: str) -> Dict[str, any]:
             .eq("dashboard_id", dashboard_id)
             .execute()
         )
-        
+
         if not response.data:
             return {
                 "available_files": [],
                 "file_schemas": [],
-                "data_summary": "No data files available for this dashboard."
+                "data_summary": "No data files available for this dashboard.",
             }
-        
+
         available_files = []
         file_schemas = []
-        
+
         for file_record in response.data:
             file_id = file_record["id"]
             file_name = file_record.get("name", f"File {file_id}")
             available_files.append(file_id)
-            
+
             try:
                 # Get schema for this file
                 schema = get_schema_from_file(file_id)
-                file_schemas.append({
-                    "file_id": file_id,
-                    "file_name": file_name,
-                    "schema": schema,
-                    "file_type": file_record.get("type", "unknown")
-                })
+                file_schemas.append(
+                    {
+                        "file_id": file_id,
+                        "file_name": file_name,
+                        "schema": schema,
+                        "file_type": file_record.get("type", "unknown"),
+                    }
+                )
             except Exception as e:
                 logger.warning(f"Could not get schema for file {file_id}: {e}")
-                file_schemas.append({
-                    "file_id": file_id,
-                    "file_name": file_name,
-                    "schema": None,
-                    "error": str(e)
-                })
-        
+                file_schemas.append(
+                    {
+                        "file_id": file_id,
+                        "file_name": file_name,
+                        "schema": None,
+                        "error": str(e),
+                    }
+                )
+
         # Create summary of available data
         data_summary = _create_data_summary(file_schemas)
-        
+
         return {
             "available_files": available_files,
             "file_schemas": file_schemas,
-            "data_summary": data_summary
+            "data_summary": data_summary,
         }
-        
+
     except Exception as e:
         logger.error(f"Error getting available data: {e}")
         return {
             "available_files": [],
             "file_schemas": [],
-            "data_summary": f"Error retrieving data: {str(e)}"
+            "data_summary": f"Error retrieving data: {str(e)}",
         }
 
 
@@ -106,41 +116,42 @@ def _create_data_summary(file_schemas: List[Dict]) -> str:
     """Create a human-readable summary of available data."""
     if not file_schemas:
         return "No data files available."
-    
+
     summary_parts = []
     summary_parts.append(f"Available data files: {len(file_schemas)} file(s)")
-    
+
     for file_info in file_schemas:
         file_name = file_info.get("file_name", "Unknown")
         file_id = file_info.get("file_id", "Unknown")
-        
+
         if file_info.get("error"):
             summary_parts.append(f"- {file_name} (ID: {file_id}): Error loading schema")
             continue
-            
+
         schema = file_info.get("schema")
         if not schema:
             summary_parts.append(f"- {file_name} (ID: {file_id}): No schema available")
             continue
-            
+
         columns = schema.get("columns", [])
         total_rows = schema.get("total_rows", 0)
-        
+
         column_summary = []
         for col in columns[:5]:  # Show first 5 columns
             col_name = col.get("name", "unknown")
             col_type = col.get("type", "unknown")
             column_summary.append(f"{col_name} ({col_type})")
-        
+
         if len(columns) > 5:
             column_summary.append(f"... and {len(columns) - 5} more columns")
-        
+
         summary_parts.append(
             f"- {file_name} (ID: {file_id}): {total_rows} rows, "
             f"columns: {', '.join(column_summary)}"
         )
-    
+
     return "\n".join(summary_parts)
+
 
 ## Files
 
@@ -355,7 +366,9 @@ def create_widget(widget_input: CreateWidgetInput) -> Widget:
     try:
         supabase = _get_supabase_client()
         # Use provided widget_id if available, otherwise generate new UUID
-        widget_id = widget_input.widget_id if widget_input.widget_id else str(uuid.uuid4())
+        widget_id = (
+            widget_input.widget_id if widget_input.widget_id else str(uuid.uuid4())
+        )
 
         # Prepare widget data from input model - aligned with new schema
         widget_data = {
@@ -366,7 +379,9 @@ def create_widget(widget_input: CreateWidgetInput) -> Widget:
             "config": widget_input.config,
             "created_at": datetime.now().isoformat(),
             "updated_at": datetime.now().isoformat(),
-            "is_configured": widget_input.is_configured if widget_input.is_configured is not None else False,
+            "is_configured": widget_input.is_configured
+            if widget_input.is_configured is not None
+            else False,
         }
 
         # Add optional fields if provided (only fields that exist in the new schema)
@@ -455,57 +470,67 @@ def update_widget(update_input: UpdateWidgetInput) -> Widget:
         raise
 
 
-def update_widgets_configuration_status(widget_ids: List[str], is_configured: bool = True) -> Dict[str, Any]:
+def update_widgets_configuration_status(
+    widget_ids: List[str], is_configured: bool = True
+) -> Dict[str, Any]:
     """Update is_configured status for multiple widgets.
-    
+
     Args:
         widget_ids: List of widget IDs to update
         is_configured: Configuration status to set (default True)
-    
+
     Returns:
         Dict with update results
-    
+
     Raises:
         Exception: If widget update fails
     """
     try:
         if not widget_ids:
-            return {"success": True, "updated_count": 0, "message": "No widget IDs provided"}
-            
+            return {
+                "success": True,
+                "updated_count": 0,
+                "message": "No widget IDs provided",
+            }
+
         supabase = _get_supabase_client()
-        
+
         # Update all widgets at once using in_ filter
         update_data = {
             "is_configured": is_configured,
-            "updated_at": datetime.now().isoformat()
+            "updated_at": datetime.now().isoformat(),
         }
-        
+
         result = (
             supabase.table("widgets")
             .update(update_data)
             .in_("id", widget_ids)
             .execute()
         )
-        
+
         updated_count = len(result.data) if result.data else 0
-        
-        logger.info(f"Updated is_configured={is_configured} for {updated_count} widgets")
-        
+
+        logger.info(
+            f"Updated is_configured={is_configured} for {updated_count} widgets"
+        )
+
         return {
             "success": True,
             "updated_count": updated_count,
             "requested_count": len(widget_ids),
-            "message": f"Successfully updated configuration status for {updated_count} widgets"
+            "message": f"Successfully updated configuration status for {updated_count} widgets",
         }
-        
+
     except Exception as e:
-        error_msg = f"Error updating configuration status for widgets {widget_ids}: {str(e)}"
+        error_msg = (
+            f"Error updating configuration status for widgets {widget_ids}: {str(e)}"
+        )
         logger.error(error_msg)
         return {
             "success": False,
             "updated_count": 0,
             "message": error_msg,
-            "error": str(e)
+            "error": str(e),
         }
 
 
@@ -734,118 +759,281 @@ def get_sample_data_from_files(file_ids: List[str]) -> Dict[str, Any]:
 
 ## Reference Widget Operations
 
+
 def fetch_reference_widget_details(widget_id: str) -> Dict[str, Any]:
     """Fetch widget details including config from database for reference purposes.
-    
+
     This helper function is used by text block agents to fetch details of widgets
     they need to reference or explain. Follows CLAUDE.md guidelines by centralizing
     database operations in actions.
-    
+
     Args:
         widget_id: Widget identifier to fetch
-        
+
     Returns:
         Dict containing widget details with config, title, type, etc.
-        
+
     Raises:
         Exception: If widget not found or fetch fails
     """
     try:
         supabase = _get_supabase_client()
-        
-        # Fetch widget details from database  
+
+        # Fetch widget details from database
         widget_result = (
             supabase.table("widgets")
-            .select("id, title, type, config, data, dashboard_id, summary, order, is_configured")
+            .select(
+                "id, title, type, config, data, dashboard_id, summary, order, is_configured"
+            )
             .eq("id", widget_id)
             .single()
             .execute()
         )
-        
+
         if not widget_result.data:
             raise Exception(f"Reference widget {widget_id} not found")
-            
+
         widget_data = widget_result.data
-        
+
         logger.info(f"Successfully fetched reference widget details for {widget_id}")
-        
+
         return {
             "widget_id": widget_data["id"],
             "title": widget_data.get("title", ""),
             "description": "",  # Description not in database schema - use empty string
-            "widget_type": widget_data.get("type", ""),  # Field is 'type' not 'widget_type'
+            "widget_type": widget_data.get(
+                "type", ""
+            ),  # Field is 'type' not 'widget_type'
             "config": widget_data.get("config", {}),
             "data": widget_data.get("data", {}),
             "summary": widget_data.get("summary", ""),
             "order": widget_data.get("order", 0),
             "is_configured": widget_data.get("is_configured", False),
-            "dashboard_id": widget_data.get("dashboard_id", "")
+            "dashboard_id": widget_data.get("dashboard_id", ""),
         }
-        
+
     except Exception as e:
-        error_msg = f"Failed to fetch reference widget details for {widget_id}: {str(e)}"
+        error_msg = (
+            f"Failed to fetch reference widget details for {widget_id}: {str(e)}"
+        )
         logger.error(error_msg)
         raise Exception(error_msg) from e
 
 
-def fetch_multiple_reference_widget_details(widget_ids: List[str]) -> List[Dict[str, Any]]:
+def fetch_multiple_reference_widget_details(
+    widget_ids: List[str],
+) -> List[Dict[str, Any]]:
     """Fetch details for multiple reference widgets from database.
-    
+
     This helper function efficiently fetches details for multiple widgets
     that need to be referenced by text blocks.
-    
+
     Args:
         widget_ids: List of widget identifiers to fetch
-        
+
     Returns:
         List of dicts containing widget details, empty list if none found
-        
+
     Raises:
         Exception: If database query fails
     """
     if not widget_ids:
         return []
-        
+
     try:
         supabase = _get_supabase_client()
-        
+
         # Fetch multiple widgets in a single query
         widgets_result = (
             supabase.table("widgets")
-            .select("id, title, type, config, data, dashboard_id, summary, order, is_configured")
+            .select(
+                "id, title, type, config, data, dashboard_id, summary, order, is_configured"
+            )
             .in_("id", widget_ids)
             .execute()
         )
-        
+
         if not widgets_result.data:
             logger.warning(f"No reference widgets found for IDs: {widget_ids}")
             return []
-        
+
         reference_widgets = []
         for widget_data in widgets_result.data:
-            reference_widgets.append({
-                "widget_id": widget_data["id"],
-                "title": widget_data.get("title", ""),
-                "description": "",  # Description not in database schema
-                "widget_type": widget_data.get("type", ""),
-                "config": widget_data.get("config", {}),
-                "data": widget_data.get("data", {}),
-                "summary": widget_data.get("summary", ""),
-                "order": widget_data.get("order", 0),
-                "is_configured": widget_data.get("is_configured", False),
-                "dashboard_id": widget_data.get("dashboard_id", "")
-            })
-        
-        logger.info(f"Successfully fetched {len(reference_widgets)} reference widgets from {len(widget_ids)} requested")
+            reference_widgets.append(
+                {
+                    "widget_id": widget_data["id"],
+                    "title": widget_data.get("title", ""),
+                    "description": "",  # Description not in database schema
+                    "widget_type": widget_data.get("type", ""),
+                    "config": widget_data.get("config", {}),
+                    "data": widget_data.get("data", {}),
+                    "summary": widget_data.get("summary", ""),
+                    "order": widget_data.get("order", 0),
+                    "is_configured": widget_data.get("is_configured", False),
+                    "dashboard_id": widget_data.get("dashboard_id", ""),
+                }
+            )
+
+        logger.info(
+            f"Successfully fetched {len(reference_widgets)} reference widgets from {len(widget_ids)} requested"
+        )
         return reference_widgets
-        
+
     except Exception as e:
-        error_msg = f"Failed to fetch reference widget details for {widget_ids}: {str(e)}"
+        error_msg = (
+            f"Failed to fetch reference widget details for {widget_ids}: {str(e)}"
+        )
         logger.error(error_msg)
         raise Exception(error_msg) from e
 
 
 # Export all public functions
+def get_dashboard_widgets_for_ordering(dashboard_id: str) -> List[Dict[str, Any]]:
+    """Fetch existing dashboard widgets with only required columns for ordering.
+
+    Args:
+        dashboard_id: Dashboard identifier
+
+    Returns:
+        List of widget dictionaries with id, widget_type, order, and summary
+
+    Raises:
+        Exception: If database query fails
+    """
+    try:
+        supabase = _get_supabase_client()
+
+        # Fetch only the required columns for ordering
+        # Note: Using explicit column selection without alias due to Supabase client issue
+        response = (
+            supabase.table("widgets")
+            .select("id, type, order, summary")
+            .eq("dashboard_id", dashboard_id)
+            .order("order", desc=False)  # Order by current order
+            .execute()
+        )
+
+        if response.data:
+            # Transform the data to use widget_type key as expected by the ordering logic
+            transformed_data = []
+            for widget in response.data:
+                transformed_widget = {
+                    "id": widget["id"],
+                    "widget_type": widget["type"],  # Rename type to widget_type
+                    "order": widget["order"],
+                    "summary": widget["summary"]
+                }
+                transformed_data.append(transformed_widget)
+            
+            logger.info(
+                f"Retrieved {len(transformed_data)} widgets for ordering from dashboard {dashboard_id}"
+            )
+            return transformed_data
+        else:
+            logger.info(f"No widgets found for dashboard {dashboard_id}")
+            return []
+
+    except Exception as e:
+        logger.error(f"Error fetching dashboard widgets for ordering: {e}")
+        raise
+
+
+def update_widgets_order_and_configuration(
+    widget_updates: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Update widget orders and mark them as configured using optimized bulk operations.
+
+    Args:
+        widget_updates: List of dictionaries with 'id', 'order', and 'is_configured' keys
+
+    Returns:
+        Dict with success status, updated_count, and message
+
+    Raises:
+        Exception: If database update fails
+    """
+    try:
+        supabase = _get_supabase_client()
+        
+        if not widget_updates:
+            return {
+                "success": True,
+                "updated_count": 0,
+                "message": "No widgets to update"
+            }
+
+        # Validate and prepare updates
+        valid_updates = []
+        current_timestamp = datetime.now().isoformat()
+        
+        for update in widget_updates:
+            widget_id = update.get("id")
+            new_order = update.get("order")
+            is_configured = update.get("is_configured", True)
+
+            if not widget_id or new_order is None:
+                logger.warning(f"Invalid update data: {update}")
+                continue
+                
+            valid_updates.append({
+                "id": widget_id,
+                "order": new_order,
+                "is_configured": is_configured,
+                "updated_at": current_timestamp
+            })
+
+        if not valid_updates:
+            return {
+                "success": False,
+                "updated_count": 0,
+                "message": "No valid widget updates provided"
+            }
+
+        # Perform individual updates for each widget (safer than upsert for existing records)
+        # This ensures we only update existing widgets and don't accidentally create new ones
+        updated_count = 0
+        
+        for update in valid_updates:
+            widget_id = update["id"]
+            try:
+                response = (
+                    supabase.table("widgets")
+                    .update({
+                        "order": update["order"],
+                        "is_configured": update["is_configured"],
+                        "updated_at": update["updated_at"]
+                    })
+                    .eq("id", widget_id)
+                    .execute()
+                )
+                
+                if response.data:
+                    updated_count += 1
+                    logger.debug(f"Updated widget {widget_id} with order {update['order']}")
+                else:
+                    logger.warning(f"Widget {widget_id} not found for update")
+                    
+            except Exception as widget_error:
+                logger.error(f"Failed to update widget {widget_id}: {str(widget_error)}")
+                # Continue with other widgets instead of failing completely
+                continue
+        
+        logger.info(
+            f"Successfully updated {updated_count}/{len(valid_updates)} widgets with new orders and configuration status"
+        )
+
+        return {
+            "success": True,
+            "updated_count": updated_count,
+            "message": f"Successfully updated {updated_count} widgets",
+        }
+
+    except Exception as e:
+        error_msg = f"Error updating widget orders and configuration: {e}"
+        logger.error(error_msg)
+        return {"success": False, "updated_count": 0, "message": error_msg}
+
+
 __all__ = [
     # File operations
     "get_data_from_file",
@@ -865,4 +1053,7 @@ __all__ = [
     # Reference widget operations
     "fetch_reference_widget_details",
     "fetch_multiple_reference_widget_details",
+    # Widget ordering operations
+    "get_dashboard_widgets_for_ordering",
+    "update_widgets_order_and_configuration",
 ]
