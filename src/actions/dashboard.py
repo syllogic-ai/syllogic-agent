@@ -14,6 +14,17 @@ from supabase import Client
 
 from agent.models import CreateWidgetInput, UpdateWidgetInput, Widget
 
+# Import buckets module using absolute path
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+from buckets import (
+    parse_storage_path_with_bucket, 
+    get_bucket_type_from_name, 
+    is_public_bucket,
+    DEFAULT_USER_BUCKET
+)
+
 
 # Import config using the robust import utility to avoid circular dependencies
 def _get_supabase_client():
@@ -162,7 +173,7 @@ def _create_data_summary(file_schemas: List[Dict]) -> str:
 
 
 def get_data_from_file(file_id: str) -> pd.DataFrame:
-    """Get complete data from a file using its storage path.
+    """Get complete data from a file using its storage path with bucket identification.
 
     Args:
         file_id: File identifier
@@ -190,7 +201,19 @@ def get_data_from_file(file_id: str) -> pd.DataFrame:
 
         storage_path = file_info.data["storage_path"]
         original_filename = file_info.data["original_filename"]
-        file_info.data.get("mime_type")
+        mime_type = file_info.data.get("mime_type")
+
+        # Parse storage path to extract bucket and file path
+        try:
+            bucket_name, file_path = parse_storage_path_with_bucket(storage_path)
+            bucket_type = get_bucket_type_from_name(bucket_name)
+            is_public = is_public_bucket(bucket_type)
+        except (ValueError, KeyError) as e:
+            logger.warning(f"Could not parse storage path '{storage_path}': {e}. Using default bucket.")
+            # Fallback to default bucket if parsing fails
+            bucket_name = DEFAULT_USER_BUCKET.value
+            file_path = storage_path
+            is_public = False
 
         # Get base URL from environment variables
         supabase_storage_base_url = os.getenv("SUPABASE_STORAGE_BASE_URL")
@@ -198,14 +221,18 @@ def get_data_from_file(file_id: str) -> pd.DataFrame:
             # Construct from SUPABASE_URL if SUPABASE_STORAGE_BASE_URL not available
             supabase_url = os.getenv("SUPABASE_URL", "")
             if supabase_url:
-                supabase_storage_base_url = f"{supabase_url}/storage/v1/object/public"
+                # Use public or private endpoint based on bucket configuration
+                endpoint = "public" if is_public else "object"
+                supabase_storage_base_url = f"{supabase_url}/storage/v1/{endpoint}"
             else:
                 raise Exception(
                     "SUPABASE_STORAGE_BASE_URL or SUPABASE_URL environment variable not set"
                 )
 
-        # Construct full URL
-        file_url = f"{supabase_storage_base_url}/{storage_path}"
+        # Construct full URL with bucket identification
+        file_url = f"{supabase_storage_base_url}/{bucket_name}/{file_path}"
+
+        logger.info(f"Fetching file from bucket '{bucket_name}' with path '{file_path}' (public: {is_public})")
 
         # Download file content
         response = requests.get(file_url)
@@ -223,7 +250,7 @@ def get_data_from_file(file_id: str) -> pd.DataFrame:
             df = pd.read_csv(io.StringIO(response.text))
 
         logger.info(
-            f"Successfully loaded data from file {file_id}: {df.shape[0]} rows, {df.shape[1]} columns"
+            f"Successfully loaded data from file {file_id} in bucket '{bucket_name}': {df.shape[0]} rows, {df.shape[1]} columns"
         )
         return df
 
