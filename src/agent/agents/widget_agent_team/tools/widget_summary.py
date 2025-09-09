@@ -1,10 +1,11 @@
 """Widget summary generation tool for creating VLLM-friendly widget descriptions."""
 
+from codeop import Compile
 import json
 from typing import Dict, Any
 
 from langchain_openai import ChatOpenAI
-from actions.prompts import get_prompt_with_fallback, get_prompt_config
+from actions.prompts import get_prompt_config, compile_prompt
 
 # Get logger that uses Logfire if available
 try:
@@ -43,7 +44,7 @@ def generate_widget_summary(
     """
     try:
         # Compile dynamic variables for Langfuse prompt
-        dynamic_variables = {
+        prompt_variables = {
             "widget_type": widget_type,
             "widget_title": title,
             "widget_description": description or "No description provided",
@@ -55,36 +56,19 @@ def generate_widget_summary(
             "accessibility_context": "This summary will be used by VLLMs and should be understandable to someone who cannot see the visual dashboard"
         }
         
-        # Get prompt from Langfuse with fallback
-        fallback_prompt = """Create a brief 2-3 sentence summary of this widget that describes what it contains in an accessible way.
 
-Widget Type: {widget_type}
-Title: {widget_title}
-Description: {widget_description}
-Config: {widget_config}
-
-Context: {accessibility_context}
-
-The summary should mention:
-- What type of visualization or content this is
-- What categories/data points are included
-- Key patterns or insights if apparent from the data
-- For text blocks, what the main message or content is about
-
-Keep it concise but informative for someone who cannot see the dashboard."""
-
-        compiled_prompt = get_prompt_with_fallback(
-            "widget-summary-generation",
-            fallback_prompt,
-            dynamic_variables
-        )
+        compiled_prompt = compile_prompt(
+                    "widget_agent_team/text_block_agent",
+                    prompt_variables,
+                    label="latest",
+                )
         
         # Get model configuration from Langfuse with fallback defaults
         default_config = {
             "model": "gpt-4o-mini",
             "temperature": 0.3
         }
-        prompt_config = get_prompt_config("widget-summary-generation", default_config)
+        prompt_config = get_prompt_config("widget_agent_team/widget-summary-generation", default_config)
         model_name = prompt_config.get("model", "gpt-4o-mini")
         temperature = prompt_config.get("temperature", 0.3)
         reasoning_effort = prompt_config.get("reasoning_effort")

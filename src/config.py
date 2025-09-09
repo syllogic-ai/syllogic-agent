@@ -124,7 +124,9 @@ def get_e2b_api_key() -> str:
 
         _e2b_api_key = api_key
         if LOGFIRE_AVAILABLE:
-            logfire.info("E2B API key loaded successfully")
+            logfire.info("E2B API key loaded successfully", args={"api_key": _e2b_api_key})
+            logfire.info("Environmental variable is", args={"E2B_SANDBOX_API_KEY": os.getenv("E2B_SANDBOX_API_KEY"), 
+            "TEST_VARIABLE": os.getenv("TEST_VAR")})
         return _e2b_api_key
 
     except Exception as e:

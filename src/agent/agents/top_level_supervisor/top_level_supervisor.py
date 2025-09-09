@@ -617,30 +617,30 @@ def execute_widget_tasks(
                 logger.info(f"🔍 WIDGET RESULT DEBUG for task {task.task_id}:")
                 logger.info(f"  - task_status: {widget_result.get('task_status')}")
                 logger.info(f"  - data_validated: {widget_result.get('data_validated')}")
-                logger.info(f"  - has_database_operation: {bool(widget_result.get('database_operation'))}")
+                logger.info(f"  - has_database_operation: {bool(widget_result.get('operation'))}")
                 logger.info(f"  - has_data: {bool(widget_result.get('data'))}")
                 logger.info(f"  - error_messages: {widget_result.get('error_messages', [])}")
+                logger.info(f"  - widget_result: {widget_result}")
                 
                 if widget_result.get("error_messages"):
                     task.error_message = "; ".join(widget_result["error_messages"])
                     task.task_status = "failed"
                 else:
                     # Store the full database operation as the result (not just a message)
-                    db_operation = widget_result.get("database_operation")
+                    db_operation = widget_result.get("operation")
                     if db_operation:
-                        logger.info(f"🎯 STORING DATABASE OPERATION for task {task.task_id}: {db_operation.get('operation_type')} with widget_data keys: {list(db_operation.get('widget_data', {}).keys())}")
+                        logger.info(f"🎯 STORING DATABASE OPERATION for task {task.task_id}: {db_operation} with widget_data keys: {list(widget_result.get('data', {}).keys())}")
                         task.result = db_operation
                         task.database_operation = db_operation
                     else:
                         logger.info(f"❌ NO DATABASE OPERATION found for task {task.task_id} - using fallback string")
                         task.result = f"Widget {current_task.operation} operation completed successfully"
-                    
                     # Capture the actual widget_id from the completed task
                     actual_widget_id = widget_result.get("widget_id")
                     if actual_widget_id and task.task_status == "completed":
                         updated_completed_widget_ids[task.task_id] = actual_widget_id
                         logger.info(f"Captured completed widget ID: {actual_widget_id} for task {task.task_id}")
-                
+
                 # Update database task status if db_task_id exists
                 if task.db_task_id:
                     try:
@@ -655,7 +655,6 @@ def execute_widget_tasks(
                         logger.info(f"Updated database task {task.db_task_id} status to {task.task_status}")
                     except Exception as db_error:
                         logger.warning(f"Failed to update database task status: {db_error}")
-                    
             final_updated_tasks.append(task)
         
         # Create execution message including dependency resolution if it occurred
