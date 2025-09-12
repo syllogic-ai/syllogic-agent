@@ -54,12 +54,7 @@ def create_e2b_sandbox():
     try:
         from e2b_code_interpreter import Sandbox
         
-        e2b_api_key = get_e2b_api_key()
-        if not e2b_api_key:
-            raise ValueError("E2B API key is not available. Please set E2B_SANDBOX_API_KEY environment variable.")
-        
-        # Use constructor with API key, not .create() method
-        sandbox = Sandbox(api_key=e2b_api_key) 
+        sandbox = Sandbox.create()
         logger.info("Created synchronous E2B sandbox successfully")
         return sandbox
         
