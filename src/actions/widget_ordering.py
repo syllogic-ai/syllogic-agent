@@ -1,6 +1,7 @@
 """Widget ordering functionality using LLM-based analysis with Langfuse integration."""
 
 import json
+import os
 from datetime import datetime
 from typing import Dict, Any, List
 
@@ -152,7 +153,9 @@ def _get_llm_widget_ordering(
     try:
         # Fetch model configuration from Langfuse (REQUIRED)
         logger.info("Fetching model configuration from Langfuse for widget ordering...")
-        prompt_config = get_prompt_config("top_level_supervisor/tools/widget_ordering", label="latest")
+        env = os.getenv("ENVIRONMENT", "prod")
+        prompt_config = get_prompt_config("top_level_supervisor/tools/widget_ordering", 
+        label="production" if env.lower() == "prod" else "development" if env.lower() == "dev" else env.lower())
 
         # Extract required model and temperature from Langfuse config
         model = prompt_config.get("model")
@@ -186,8 +189,12 @@ def _get_llm_widget_ordering(
 
         # Compile the prompt with dynamic variables from Langfuse (REQUIRED)
         logger.info("Compiling widget ordering prompt from Langfuse...")
+        env = os.getenv("ENVIRONMENT", "prod")
         ordering_prompt = compile_prompt(
-            "top_level_supervisor/tools/widget_ordering", prompt_variables, label="latest"
+            "top_level_supervisor/tools/widget_ordering", 
+            prompt_variables, 
+            # label="latest"
+            label="production" if env.lower() == "prod" else "development" if env.lower() == "dev" else env.lower()
         )
 
         # Validate compiled prompt

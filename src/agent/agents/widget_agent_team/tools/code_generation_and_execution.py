@@ -19,13 +19,13 @@ from config import get_langfuse_callback_handler, LANGFUSE_AVAILABLE
 
 from actions.utils import get_chart_config_schema_string, analyze_schema_validation_error, analyze_pandas_execution_error
 from actions.e2b_sandbox import create_e2b_sandbox, execute_code_in_sandbox, kill_sandbox
+from actions.prompts import format_messages_for_prompt, extract_messages_from_state
 
 # Handle imports for different execution contexts
 try:
     from actions.prompts import compile_prompt, get_prompt_config
 except ImportError:
     import sys
-    import os
     # Add the src directory to the path
     src_path = os.path.join(os.path.dirname(__file__), '..', '..', '..', '..')
     if src_path not in sys.path:
@@ -69,7 +69,6 @@ def generate_and_execute_python_code_tool(
                 logger = get_logfire_logger(__name__)
             except ImportError:
                 import sys
-                import os
                 # Add the src directory to the path if needed
                 src_path = os.path.join(os.path.dirname(__file__), '..', '..', '..', '..')
                 if src_path not in sys.path:
@@ -142,7 +141,9 @@ def generate_and_execute_python_code_tool(
                 # Get the schema string programmatically - run in thread to avoid blocking
                 chart_config_schema = await asyncio.to_thread(get_chart_config_schema_string)
                 
-                # Prepare all 9 dynamic variables as specified by user
+                logger.info(f"DEBUG State in code generation and execution tool: {state}")
+
+                # Prepare all 10 dynamic variables as specified by user
                 prompt_variables = {
                     "user_request": user_request,
                     "widget_type": widget_type,
@@ -152,17 +153,20 @@ def generate_and_execute_python_code_tool(
                     "chart_config_schema": chart_config_schema,
                     "len_schemas_info": len(schemas_info),
                     "schemas_info_rows": sum(schema.get("total_rows", 0) for schema in schemas_info),
-                    "schemas_info_columns_info": ", ".join([f"{schema.get('file_id', 'unknown')}: {len(schema.get('columns', []))} columns" for schema in schemas_info])
+                    "schemas_info_columns_info": ", ".join([f"{schema.get('file_id', 'unknown')}: {len(schema.get('columns', []))} columns" for schema in schemas_info]),
+                    "previous_messages": format_messages_for_prompt(extract_messages_from_state(state))
                 }
                 
                 logger.info("Fetching and compiling code generation prompt from Langfuse...")
                 
                 # Compile the prompt with dynamic variables from Langfuse (REQUIRED) - run in thread to avoid blocking
+                env = os.getenv("ENVIRONMENT", "prod")
                 code_generation_prompt = await asyncio.to_thread(
                     compile_prompt,
                     "widget_agent_team/data/tools/generate_python_code", 
                     prompt_variables,
-                    label="latest"
+                    # label="latest"
+                    label="production" if env.lower() == "prod" else "development" if env.lower() == "dev" else env.lower()
                 )
                 
                 # Validate compiled prompt (handle different formats)
@@ -180,7 +184,8 @@ def generate_and_execute_python_code_tool(
                 prompt_config = await asyncio.to_thread(
                     get_prompt_config, 
                     "widget_agent_team/data/tools/generate_python_code", 
-                    label="latest"
+                    # label="latest"
+                    label="production" if env.lower() == "prod" else "development" if env.lower() == "dev" else env.lower()
                 )
                 
                 # Extract required model and temperature from Langfuse config

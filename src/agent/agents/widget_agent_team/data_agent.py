@@ -1,5 +1,5 @@
 """Data processing agent for widget creation."""
-
+import os
 from datetime import datetime
 from typing import Annotated, Optional, Sequence, TypedDict
 
@@ -18,7 +18,6 @@ try:
     from actions.prompts import retrieve_prompt, get_prompt_config
 except ImportError:
     import sys
-    import os
     # Add the src directory to the path
     src_path = os.path.join(os.path.dirname(__file__), '..', '..', '..')
     if src_path not in sys.path:
@@ -41,7 +40,6 @@ class DataAgent:
                 logger = get_logfire_logger(__name__)
             except ImportError:
                 import sys
-                import os
                 # Add the src directory to the path if needed
                 src_path = os.path.join(os.path.dirname(__file__), '..', '..', '..')
                 if src_path not in sys.path:
@@ -55,7 +53,9 @@ class DataAgent:
             
             # Fetch main data processing prompt configuration
             logger.info("Fetching model configuration from Langfuse for data_agent...")
-            main_prompt_config = get_prompt_config("widget_agent_team/data/data_node", label="latest")
+            env = os.getenv("ENVIRONMENT", "prod")
+            main_prompt_config = get_prompt_config("widget_agent_team/data/data_node", 
+            label="production" if env.lower() == "prod" else "development" if env.lower() == "dev" else env.lower())
             
             # Extract required model and temperature from main prompt config
             model = main_prompt_config.get("model")
@@ -71,8 +71,9 @@ class DataAgent:
             logger.info(f"✅ Using Langfuse model config - model: {model}, temperature: {temperature}, reasoning_effort: {reasoning_effort}")
             
             # Fetch main data processing prompt (REQUIRED)
-            logger.info("Fetching main data processing prompt from Langfuse...")
-            main_prompt_obj = retrieve_prompt("widget_agent_team/data/data_node", label="latest")
+            logger.info("Fetching main data processing prompt from Langfuse...")    
+            main_prompt_obj = retrieve_prompt("widget_agent_team/data/data_node", 
+            label="production" if env.lower() == "prod" else "development" if env.lower() == "dev" else env.lower())
             
             # Handle different prompt formats
             if hasattr(main_prompt_obj, 'prompt'):

@@ -1,6 +1,7 @@
 """Widget supervisor node with intelligent routing based on complete state analysis."""
 
 import json
+import os
 from datetime import datetime
 from typing import Any, Dict
 
@@ -9,6 +10,7 @@ from langgraph.graph import END
 from langgraph.types import Command
 
 from agent.models import SupervisorDecision, WidgetAgentState
+from actions.prompts import format_messages_for_prompt, extract_messages_from_state
 
 # Handle imports for different execution contexts
 try:
@@ -16,7 +18,6 @@ try:
     from actions.prompts import compile_prompt, get_prompt_config
 except ImportError:
     import sys
-    import os
     # Add the src directory to the path
     src_path = os.path.join(os.path.dirname(__file__), '..', '..', '..')
     if src_path not in sys.path:
@@ -39,7 +40,6 @@ class WidgetSupervisor:
                 logger = get_logfire_logger(__name__)
             except ImportError:
                 import sys
-                import os
                 # Add the src directory to the path if needed
                 src_path = os.path.join(os.path.dirname(__file__), '..', '..', '..')
                 if src_path not in sys.path:
@@ -52,7 +52,9 @@ class WidgetSupervisor:
                     logger = logging.getLogger(__name__)
             
             logger.info("Fetching model configuration from Langfuse for create_routing_prompt...")
-            prompt_config = get_prompt_config("widget_agent_team/widget_supervisor", label="latest")
+            env = os.getenv("ENVIRONMENT", "prod")
+            prompt_config = get_prompt_config("widget_agent_team/widget_supervisor", 
+            label="production" if env.lower() == "prod" else "development" if env.lower() == "dev" else env.lower())
             
             # Extract required model and temperature from Langfuse config
             model = prompt_config.get("model")
@@ -244,7 +246,6 @@ class WidgetSupervisor:
                 logger = get_logfire_logger(__name__)
             except ImportError:
                 import sys
-                import os
                 # Add the src directory to the path if needed
                 src_path = os.path.join(os.path.dirname(__file__), '..', '..', '..')
                 if src_path not in sys.path:
@@ -264,10 +265,12 @@ class WidgetSupervisor:
             logger.info("Fetching and compiling routing prompt from Langfuse...")
             
             # Compile the prompt with dynamic variables from Langfuse (REQUIRED)
+            env = os.getenv("ENVIRONMENT", "prod")
             routing_prompt = compile_prompt(
                 "widget_agent_team/widget_supervisor", 
                 prompt_variables,
-                label="latest"
+                # label="latest"
+                label="production" if env.lower() == "prod" else "development" if env.lower() == "dev" else env.lower()
             )
             
             # Validate compiled prompt (handle different formats)

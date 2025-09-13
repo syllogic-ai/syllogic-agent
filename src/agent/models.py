@@ -117,6 +117,7 @@ class WidgetAgentState(BaseModel):
     """Complete state for the widget agent workflow using Pydantic"""
 
     # Original WidgetTask fields
+    messages: Annotated[Sequence[BaseMessage], add_messages]
     task_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     task_status: Literal["pending", "in_progress", "completed", "failed"] = Field(
         default="pending"

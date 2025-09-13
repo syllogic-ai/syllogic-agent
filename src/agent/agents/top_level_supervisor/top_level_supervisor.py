@@ -4,6 +4,7 @@ This supervisor orchestrates tasks across all specialized agent teams,
 analyzes user requests, reads available data, and delegates appropriate tasks.
 """
 
+import os
 import uuid
 from datetime import datetime
 from typing import Dict, Any, List, Optional
@@ -25,6 +26,7 @@ from actions.prompts import compile_prompt, get_prompt_config
 from actions.tasks import create_tasks_from_delegated_tasks, generate_task_group_id, format_task_list_message, update_task_status as update_db_task_status
 from actions.messages import create_task_list_message
 from agent.models import UpdateTaskInput
+from actions.widget_cleanup import cleanup_unconfigured_widgets
 from config import get_langfuse_callback_handler, LANGFUSE_AVAILABLE, get_supabase_client
 
 # Handle imports for different execution contexts
@@ -131,8 +133,10 @@ def plan_widget_tasks(
             }
             
             # Fetch model configuration from Langfuse (REQUIRED)
+            env = os.getenv("ENVIRONMENT", "prod")
             logger.info("Fetching model configuration from Langfuse for plan_widget_tasks...")
-            prompt_config = get_prompt_config("top_level_supervisor/tools/plan_widget_tasks", label="latest")
+            prompt_config = get_prompt_config("top_level_supervisor/tools/plan_widget_tasks",
+            label="production" if env.lower() == "prod" else "development" if env.lower() == "dev" else env.lower())
             
             # Extract required model and temperature from Langfuse config
             model = prompt_config.get("model")
@@ -151,7 +155,8 @@ def plan_widget_tasks(
             planning_prompt = compile_prompt(
                 "top_level_supervisor/tools/plan_widget_tasks", 
                 prompt_variables,
-                label="latest"
+                # label="latest"
+                label="production" if env.lower() == "prod" else "development" if env.lower() == "dev" else env.lower()
             )
             
             # Validate compiled prompt (handle different formats)
@@ -797,7 +802,6 @@ def create_top_level_supervisor(state: TopLevelSupervisorState, model_name: Opti
         except ImportError:
             # Handle path issues similar to the prompts import above
             import sys
-            import os
             src_path = os.path.join(os.path.dirname(__file__), '..', '..', '..')
             if src_path not in sys.path:
                 sys.path.insert(0, src_path)
@@ -860,10 +864,12 @@ def create_top_level_supervisor(state: TopLevelSupervisorState, model_name: Opti
         
         # Compile the prompt with dynamic variables from Langfuse (REQUIRED)
         logger.info("Compiling top_level_supervisor prompt from Langfuse with dynamic variables...")
+        env = os.getenv("ENVIRONMENT", "prod")
         system_prompt = compile_prompt(
             "top_level_supervisor/top_level_supervisor", 
             prompt_variables,
-            label="latest"
+            # label="latest"
+            label="production" if env.lower() == "prod" else "development" if env.lower() == "dev" else env.lower()
         )
         
         # Validate compiled prompt (handle different formats)
@@ -888,7 +894,9 @@ def create_top_level_supervisor(state: TopLevelSupervisorState, model_name: Opti
     try:
         # Fetch model configuration from Langfuse (REQUIRED)
         logger.info("Fetching model configuration from Langfuse...")
-        prompt_config = get_prompt_config("top_level_supervisor/top_level_supervisor", label="latest")
+        env = os.getenv("ENVIRONMENT", "prod")
+        prompt_config = get_prompt_config("top_level_supervisor/top_level_supervisor",
+         label="production" if env.lower() == "prod" else "development" if env.lower() == "dev" else env.lower())
         
         # Extract required configuration
         model = prompt_config.get("model")
@@ -1057,15 +1065,15 @@ def top_level_supervisor(state) -> Dict[str, Any]:
         # Prepare the message for the agent
         user_message = HumanMessage(
             content=f"""
-User Request: {supervisor_state.user_prompt}
-Dashboard ID: {supervisor_state.dashboard_id}
-Chat ID: {supervisor_state.chat_id}
-Request ID: {supervisor_state.request_id}
-User ID: {supervisor_state.user_id}
+                User Request: {supervisor_state.user_prompt}
+                Dashboard ID: {supervisor_state.dashboard_id}
+                Chat ID: {supervisor_state.chat_id}
+                Request ID: {supervisor_state.request_id}
+                User ID: {supervisor_state.user_id}
 
-Please analyze this request and coordinate the necessary tasks to fulfill it.
-Start by analyzing the available data, then determine what needs to be done.
-"""
+                Please analyze this request and coordinate the necessary tasks to fulfill it.
+                Start by analyzing the available data, then determine what needs to be done.
+                """
         )
         
         # For InjectedState to work properly with create_react_agent, 
@@ -1077,6 +1085,19 @@ Start by analyzing the available data, then determine what needs to be done.
         
         # Invoke the agent with the complete state and handle potential failures
         try:
+            # Clean up unconfigured widgets at the end of execution
+            try:
+                logger.info("🧹 Starting cleanup of unconfigured widgets...")
+                cleanup_result = cleanup_unconfigured_widgets()
+                if cleanup_result["success"]:
+                    logger.info(f"✅ Widget cleanup completed: {cleanup_result['message']}")
+                else:
+                    logger.warning(f"⚠️ Widget cleanup failed: {cleanup_result.get('error', 'Unknown error')}")
+            except Exception as cleanup_error:
+                logger.error(f"❌ Error during widget cleanup: {cleanup_error}")
+                # Don't fail the entire request if cleanup fails
+
+
             # Create Langfuse callback handler for tracing
             langfuse_config = {}
             if LANGFUSE_AVAILABLE:

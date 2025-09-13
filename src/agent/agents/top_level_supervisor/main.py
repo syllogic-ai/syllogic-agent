@@ -10,6 +10,7 @@ from typing import Dict, Any, Optional
 
 from agent.models import TopLevelSupervisorState, BackendPayload
 from .top_level_supervisor import top_level_supervisor
+from actions.widget_cleanup import cleanup_unconfigured_widgets
 
 logger = logging.getLogger(__name__)
 
@@ -196,6 +197,18 @@ class TopLevelSupervisorRunner:
             # Get the latest structured response from the supervisor cycle  
             latest_structured_response = getattr(state, '_latest_structured_response', None)
             
+            # Clean up unconfigured widgets at the end of execution
+            try:
+                logger.info("🧹 Starting cleanup of unconfigured widgets...")
+                cleanup_result = cleanup_unconfigured_widgets()
+                if cleanup_result["success"]:
+                    logger.info(f"✅ Widget cleanup completed: {cleanup_result['message']}")
+                else:
+                    logger.warning(f"⚠️ Widget cleanup failed: {cleanup_result.get('error', 'Unknown error')}")
+            except Exception as cleanup_error:
+                logger.error(f"❌ Error during widget cleanup: {cleanup_error}")
+                # Don't fail the entire request if cleanup fails
+            
             # Prepare result with structured output
             result = {
                 "request_id": state.request_id,
@@ -225,6 +238,18 @@ class TopLevelSupervisorRunner:
             
         except Exception as e:
             logger.error(f"Error executing request: {e}")
+            
+            # Clean up unconfigured widgets even if main execution failed
+            try:
+                logger.info("🧹 Starting cleanup of unconfigured widgets after execution failure...")
+                cleanup_result = cleanup_unconfigured_widgets()
+                if cleanup_result["success"]:
+                    logger.info(f"✅ Widget cleanup completed after failure: {cleanup_result['message']}")
+                else:
+                    logger.warning(f"⚠️ Widget cleanup failed after execution failure: {cleanup_result.get('error', 'Unknown error')}")
+            except Exception as cleanup_error:
+                logger.error(f"❌ Error during widget cleanup after execution failure: {cleanup_error}")
+            
             return {
                 "request_id": payload.request_id if hasattr(payload, 'request_id') else "unknown",
                 "status": "failed",

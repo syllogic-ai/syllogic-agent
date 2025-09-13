@@ -4,14 +4,15 @@ This module provides helper functions for managing prompts through Langfuse,
 including retrieving, compiling, and managing prompt versions.
 """
 
-from typing import Any, Dict, Optional
+import os
+from typing import Any, Dict, Optional, List, Union
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage
 
 # Handle imports for different execution contexts
 try:
     from config import get_langfuse_client, get_prompt
 except ImportError:
     import sys
-    import os
     # Add the src directory to the path
     src_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if src_path not in sys.path:
@@ -211,4 +212,167 @@ def list_prompts() -> list:
         
     except Exception as e:
         logger.error(f"Failed to list prompts: {str(e)}")
+        raise
+
+
+def extract_messages_from_state(state: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Extract all messages from the previous steps in an agent's state.
+    
+    This function processes the messages field from agent states and returns
+    a structured list of all messages (Human, AI, Tool) with their content
+    and metadata in a consistent format.
+    
+    Args:
+        state: Agent state dictionary containing a 'messages' field with BaseMessage objects
+        
+    Returns:
+        List of dictionaries containing message information with keys:
+        - role: Message role ('human', 'ai', 'tool', 'system')
+        - content: Message content as string
+        - message_type: Type of message (e.g., 'chat', 'tool-usage', 'task-list')
+        - tool_calls: Tool calls if present (for AI messages)
+        - tool_call_id: Tool call ID (for Tool messages)
+        - additional_kwargs: Any additional metadata from the message
+        
+    Example:
+        >>> from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+        >>> state = {
+        ...     'messages': [
+        ...         HumanMessage(content="Create a bar chart"),
+        ...         AIMessage(content="I'll help you create a bar chart", tool_calls=[...]),
+        ...         ToolMessage(content="Chart created successfully", tool_call_id="call_123")
+        ...     ]
+        ... }
+        >>> messages = extract_messages_from_state(state)
+        >>> print(messages[0])
+        {'role': 'human', 'content': 'Create a bar chart', 'message_type': 'chat', ...}
+        
+        # Format for use in prompts
+        >>> formatted = format_messages_for_prompt(messages)
+        >>> print(formatted)
+        1. [HUMAN]: Create a bar chart
+        2. [AI]: I'll help you create a bar chart [Tool calls: get_available_data()]
+        3. [TOOL] (tool-usage): Chart created successfully [Tool call ID: call_123]
+    """
+    try:
+        if hasattr(state, 'messages'):
+            # Pydantic model - access messages directly
+            messages = state.messages
+        elif isinstance(state, dict):
+            # Dictionary - use get method
+            messages = state.get('messages', [])
+        else:
+            logger.warning(f"Unknown state type: {type(state)}")
+            return []
+            
+        if not messages:
+            logger.info("No messages found in agent state")
+            return []
+        
+        extracted_messages = []
+
+        for message in messages:
+            # Handle different message types
+            if isinstance(message, HumanMessage):
+                message_data = {
+                    'role': 'human',
+                    'content': message.content,
+                    'message_type': 'chat',
+                    'additional_kwargs': message.additional_kwargs
+                }
+                
+            elif isinstance(message, AIMessage):
+                message_data = {
+                    'role': 'ai',
+                    'content': message.content,
+                    'message_type': 'chat',
+                    'tool_calls': getattr(message, 'tool_calls', []),
+                    'additional_kwargs': message.additional_kwargs
+                }
+                
+            elif isinstance(message, ToolMessage):
+                message_data = {
+                    'role': 'tool',
+                    'content': message.content,
+                    'message_type': 'tool-usage',
+                    'tool_call_id': getattr(message, 'tool_call_id', None),
+                    'additional_kwargs': message.additional_kwargs
+                }
+                
+            else:
+                # Handle other BaseMessage types or custom message types
+                message_data = {
+                    'role': getattr(message, 'type', 'unknown').lower().replace('message', ''),
+                    'content': getattr(message, 'content', str(message)),
+                    'message_type': 'chat',
+                    'additional_kwargs': getattr(message, 'additional_kwargs', {})
+                }
+                
+                # Try to extract tool calls if present
+                if hasattr(message, 'tool_calls'):
+                    message_data['tool_calls'] = message.tool_calls
+                if hasattr(message, 'tool_call_id'):
+                    message_data['tool_call_id'] = message.tool_call_id
+                if hasattr(message, 'message_type'):
+                    message_data['message_type'] = message.message_type
+            
+            extracted_messages.append(message_data)
+        
+        logger.info(f"Extracted {len(extracted_messages)} messages from agent state")
+        return extracted_messages
+        
+    except Exception as e:
+        logger.error(f"Failed to extract messages from state: {str(e)}")
+        raise
+
+
+def format_messages_for_prompt(messages: List[Dict[str, Any]], include_metadata: bool = False) -> str:
+    """Format extracted messages into a readable string for use in prompts.
+    
+    Args:
+        messages: List of message dictionaries from extract_messages_from_state
+        include_metadata: Whether to include additional metadata in the output
+        
+    Returns:
+        Formatted string representation of the message history
+    """
+    try:
+        if not messages:
+            return "No previous messages found."
+        
+        formatted_lines = []
+        
+        for i, msg in enumerate(messages, 1):
+            role = msg.get('role', 'unknown').upper()
+            content = msg.get('content', '')
+            message_type = msg.get('message_type', 'chat')
+            
+            # Format the basic message
+            line = f"{i}. [{role}]"
+            if message_type != 'chat':
+                line += f" ({message_type})"
+            line += f": {content}"
+            
+            # Add tool calls if present
+            if 'tool_calls' in msg and msg['tool_calls']:
+                tool_calls_str = ", ".join([f"{tc.get('name', 'unknown')}()" for tc in msg['tool_calls']])
+                line += f" [Tool calls: {tool_calls_str}]"
+            
+            # Add tool call ID if present
+            if 'tool_call_id' in msg and msg['tool_call_id']:
+                line += f" [Tool call ID: {msg['tool_call_id']}]"
+            
+            formatted_lines.append(line)
+            
+            # Add metadata if requested
+            if include_metadata and msg.get('additional_kwargs'):
+                metadata_str = ", ".join([f"{k}: {v}" for k, v in msg['additional_kwargs'].items()])
+                formatted_lines.append(f"   Metadata: {metadata_str}")
+        
+        result = "\n".join(formatted_lines)
+        logger.debug(f"Formatted {len(messages)} messages for prompt")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Failed to format messages for prompt: {str(e)}")
         raise
