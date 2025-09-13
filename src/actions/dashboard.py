@@ -14,11 +14,8 @@ from supabase import Client
 
 from agent.models import CreateWidgetInput, UpdateWidgetInput, Widget
 
-# Import buckets module using absolute path
-import sys
-import os
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-from buckets import (
+# Import buckets module from actions directory
+from .buckets import (
     parse_storage_path_with_bucket, 
     get_bucket_type_from_name, 
     is_public_bucket,

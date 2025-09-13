@@ -6,6 +6,7 @@ from typing import Dict, Any
 
 from langchain_openai import ChatOpenAI
 from actions.prompts import get_prompt_config, compile_prompt
+import os
 
 # Get logger that uses Logfire if available
 try:
@@ -56,11 +57,12 @@ def generate_widget_summary(
             "accessibility_context": "This summary will be used by VLLMs and should be understandable to someone who cannot see the visual dashboard"
         }
         
-
+        env = os.getenv("ENVIRONMENT", "prod")
         compiled_prompt = compile_prompt(
-                    "widget_agent_team/text_block_agent",
+                    "widget_agent_team/widget-summary-generation",
                     prompt_variables,
-                    label="latest",
+                    #label="latest",
+                    label= "production" if env.lower() == "prod" else "development" if env.lower() == "dev" else env.lower()
                 )
         
         # Get model configuration from Langfuse with fallback defaults
@@ -68,7 +70,10 @@ def generate_widget_summary(
             "model": "gpt-4o-mini",
             "temperature": 0.3
         }
-        prompt_config = get_prompt_config("widget_agent_team/widget-summary-generation", default_config)
+        prompt_config = get_prompt_config(
+            "widget_agent_team/widget-summary-generation", 
+            default_config, 
+            label= "production" if env.lower() == "prod" else "development" if env.lower() == "dev" else env.lower())
         model_name = prompt_config.get("model", "gpt-4o-mini")
         temperature = prompt_config.get("temperature", 0.3)
         reasoning_effort = prompt_config.get("reasoning_effort")
@@ -96,10 +101,11 @@ def generate_widget_summary(
         summary = response.content.strip()
         
         # Validate summary length (should be brief)
-        if len(summary) > 500:
+        if len(summary) > 1000:
             logger.warning(f"Generated summary is quite long ({len(summary)} chars), consider shortening")
             
         logger.info(f"Successfully generated widget summary for {widget_type} widget: {title}")
+        logger.info(f"Summary: {summary}")
         return summary
         
     except Exception as e:

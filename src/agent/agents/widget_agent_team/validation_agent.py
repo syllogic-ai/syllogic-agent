@@ -1,6 +1,7 @@
 """Data validation agent for widget processing."""
 
 import json
+import os
 from datetime import datetime
 from typing import List, Optional
 
@@ -10,6 +11,7 @@ from langgraph.types import Command
 from pydantic import BaseModel, Field
 
 from agent.models import WidgetAgentState
+from actions.prompts import format_messages_for_prompt, extract_messages_from_state
 
 # Initialize logger
 # Get logger that uses Logfire if available
@@ -25,7 +27,6 @@ try:
     from actions.prompts import compile_prompt, get_prompt_config
 except ImportError:
     import sys
-    import os
     # Add the src directory to the path
     src_path = os.path.join(os.path.dirname(__file__), '..', '..', '..')
     if src_path not in sys.path:
@@ -59,7 +60,9 @@ class ValidationAgent:
         # Fetch model configuration from Langfuse (REQUIRED)
         try:
             logger.info("Fetching model configuration from Langfuse for validate_data...")
-            prompt_config = get_prompt_config("widget_agent_team/validate_data", label="latest")
+            env = os.getenv("ENVIRONMENT", "prod")
+            prompt_config = get_prompt_config("widget_agent_team/validate_data",
+            label="production" if env.lower() == "prod" else "development" if env.lower() == "dev" else env.lower())
             
             # Extract required model and temperature from Langfuse config
             model = prompt_config.get("model")
@@ -143,17 +146,22 @@ class ValidationAgent:
                     "sample_data_sampled_count": sampling_info.get("sampled_count", "unknown"),
                     "sample_data_is_sampled": sampling_info.get("is_sampled", "unknown"),
                     "widget_title": state.title,
-                    "widget_description": state.description
+                    "widget_description": state.description,
+                    "previous_messages": format_messages_for_prompt(extract_messages_from_state(state))
                 }
                 
                 logger.info("Fetching and compiling validation prompt from Langfuse...")
                 
                 # Compile the prompt with dynamic variables from Langfuse (REQUIRED)
+                env = os.getenv("ENVIRONMENT", "prod")
                 validation_prompt = compile_prompt(
                     "widget_agent_team/validate_data", 
                     prompt_variables,
-                    label="latest"
+                    # label="latest"
+                    label="production" if env.lower() == "prod" else "development" if env.lower() == "dev" else env.lower()
                 )
+
+                logger.info(f"!!✅ Compiled validation prompt from Langfuse: {validation_prompt}")
                 
                 # Validate compiled prompt (handle different formats)
                 if not validation_prompt:

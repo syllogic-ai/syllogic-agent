@@ -1,0 +1,17 @@
+{
+    "max_tokens": 2000,
+    "temperature": 0.3,
+    "include_file_summaries": true,
+    "include_commit_summaries": true,
+    "pr_summary_style": "detailed",
+    "exclude_patterns": [
+      "*.lock",
+      "package-lock.json",
+      "yarn.lock"
+    ],
+    "include_patterns": [
+      "src/**/*.py",
+      "src/**/*.ts",
+      "src/**/*.tsx"
+    ]
+  }

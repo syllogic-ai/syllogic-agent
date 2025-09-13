@@ -1,6 +1,7 @@
 """Text block agent for generating HTML content using Langfuse integration."""
 
 import json
+import os
 from datetime import datetime
 from typing import Dict, Any
 
@@ -14,13 +15,15 @@ from agent.models import WidgetAgentState, TextBlockContentSchema
 from config import get_langfuse_callback_handler, LANGFUSE_AVAILABLE
 from .tools.fetch_widget import fetch_reference_widgets_details
 
+from langgraph.prebuilt import InjectedState
+from typing import Annotated
+from actions.prompts import format_messages_for_prompt, extract_messages_from_state
 # Handle imports for different execution contexts
 try:
     from actions.prompts import compile_prompt, get_prompt_config
     from actions.dashboard import update_widget
 except ImportError:
     import sys
-    import os
 
     # Add the src directory to the path
     src_path = os.path.join(os.path.dirname(__file__), "..", "..", "..")
@@ -55,8 +58,10 @@ class TextBlockAgent:
             )
 
             # Get model configuration from Langfuse (REQUIRED)
+            env = os.getenv("ENVIRONMENT", "prod")
             prompt_config = get_prompt_config(
-                "widget_agent_team/text_block_agent", label="latest"
+                "widget_agent_team/text_block_agent", 
+                label="production" if env.lower() == "prod" else "development" if env.lower() == "dev" else env.lower()
             )
 
             # Extract required model and temperature from Langfuse config
@@ -134,7 +139,7 @@ When calling generate_text_content tool, provide a content_request dictionary wi
         """Create tool for generating text block content."""
 
         @tool
-        def generate_text_content(content_request: dict) -> str:
+        def generate_text_content(state: Annotated[WidgetAgentState, InjectedState], content_request: dict) -> str:
             """Generate HTML content for text block widget using Langfuse prompt.
 
             Args:
@@ -191,16 +196,20 @@ When calling generate_text_content tool, provide a content_request dictionary wi
                     "current_timestamp": datetime.now().isoformat(),
                     "widget_id": widget_data.get("widget_id", ""),
                     "dashboard_id": widget_data.get("dashboard_id", ""),
+                    "previous_messages": format_messages_for_prompt(extract_messages_from_state(state)),
                 }
 
                 logger.info("Fetching and compiling text block prompt from Langfuse...")
 
                 # Compile the prompt with dynamic variables from Langfuse (REQUIRED)
+                env = os.getenv("ENVIRONMENT", "prod")
                 text_prompt = compile_prompt(
                     "widget_agent_team/text_block_agent",
                     prompt_variables,
-                    label="latest",
+                    # label="latest",
+                    label="production" if env.lower() == "prod" else "development" if env.lower() == "dev" else env.lower()
                 )
+                logger.info(f"!!✅ Compiled text block prompt from Langfuse: {text_prompt}")
 
                 # Validate compiled prompt
                 if not text_prompt:
@@ -220,7 +229,9 @@ When calling generate_text_content tool, provide a content_request dictionary wi
 
                 # Get LLM configuration again for content generation
                 prompt_config = get_prompt_config(
-                    "widget_agent_team/text_block_agent", label="latest"
+                    "widget_agent_team/text_block_agent", 
+                    # label="latest"
+                    label="production" if env.lower() == "prod" else "development" if env.lower() == "dev" else env.lower()
                 )
                 model = prompt_config.get("model")
                 temperature = prompt_config.get("temperature", 0.7)
