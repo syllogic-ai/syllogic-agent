@@ -6,7 +6,6 @@ execution to maintain database hygiene.
 """
 
 from typing import Dict, Any, List
-from datetime import datetime
 
 from config import get_supabase_client
 
