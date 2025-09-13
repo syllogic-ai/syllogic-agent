@@ -1,5 +1,5 @@
-## �� **Summary**
-Brief description of what this PR accomplishes
+## 📊 **Pull Request Summary**
+<!-- The commit summarizer will automatically populate this section -->
 
 ## 🔧 **Changes Made**
 - [ ] List your changes here
@@ -9,7 +9,6 @@ Brief description of what this PR accomplishes
 - [ ] All existing tests pass
 - [ ] New functionality tested
 - [ ] No linting errors
-- [ ] Manual testing completed
 
 ## �� **Notes**
 Any additional context or considerations

@@ -1,17 +1,38 @@
-name: GPT Commits summarizer
+name: GPT Commits Summarizer
 # Summary: This action will write a comment about every commit in a pull request, as well as generate a summary for every file that was modified and add it to the review page, compile a PR summary from all commit summaries and file diff summaries, and delete outdated code review comments
 
 on:
   pull_request:
-    types: [opened, synchronize]
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
 
 jobs:
   summarize:
     runs-on: ubuntu-latest
-    permissions: write-all  # Some repositories need this line
+    permissions: 
+      contents: read
+      pull-requests: write
+      issues: write
+      checks: write
 
     steps:
-      - uses: KanHarI/gpt-commit-summarizer@master
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for better analysis
+
+      - name: GPT Commit Summarizer
+        uses: KanHarI/gpt-commit-summarizer@master
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          # Optional: Add custom configuration
+          SUMMARIZER_CONFIG: |
+            {
+              "max_tokens": 2000,
+              "temperature": 0.3,
+              "include_file_summaries": true,
+              "include_commit_summaries": true,
+              "pr_summary_style": "detailed"
+            }
